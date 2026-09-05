@@ -1292,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "summ-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "postcard",
  "serde",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "summ-meta"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "lru",
  "parking_lot",
@@ -1316,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "summ-registry"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "oci-spec",
  "postcard",
@@ -1331,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "summ-server"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "summ-storage"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "bytes",
  "futures-core",
