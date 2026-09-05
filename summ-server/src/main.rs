@@ -92,7 +92,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.no_pull_counts {
         println!("  pull counts   off (--no-pull-counts)");
     }
-    print_auth(&auth, generated);
+    print_auth(&auth, generated, bound);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
@@ -100,36 +100,62 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The auth line of the banner, and any key that had to be invented.
+/// The auth mode, what it means, and any key that had to be invented.
+///
+/// The mode's *name* is not the thing an operator needs off a banner - what it
+/// lets a stranger do is - so every mode spells that out instead of leaving it
+/// to be looked up. Each one says what is open as well as what is shut: under
+/// `public-pull` in particular, a reader is entitled to learn here that the
+/// catalog and the UI just became world-readable.
+///
+/// `open` says it loudly, because it is the mode whose implication surprises
+/// people and the surprise is an unauthenticated write endpoint. The warning is
+/// written against the *bound address* rather than against the mode alone: open
+/// on loopback is a laptop registry, open on `0.0.0.0` is a registry the
+/// network can push to, and shouting at the operator of the first is how a
+/// banner teaches people to skim past it.
 ///
 /// A *generated* key exists nowhere else, so this is its only chance to reach
 /// the operator and it is printed in full. A *supplied* key is not printed at
 /// all: whoever passed it already has it, and echoing it only copies a live
 /// credential into a scrollback, a log file and a CI transcript. So the banner
 /// says which keys it made up, and stays silent about the rest.
-fn print_auth(auth: &AuthPolicy, generated: Option<Generated>) {
+fn print_auth(auth: &AuthPolicy, generated: Option<Generated>, bound: SocketAddr) {
     let generated = generated.unwrap_or(Generated {
         read: false,
         write: false,
     });
     match auth {
         AuthPolicy::Open => {
-            println!(
-                "  auth mode     open - anonymous pull and push \
-                 (--auth-mode public-pull to gate push)"
-            );
+            println!("  auth mode     open - no credential is required, to pull or to push");
+            match reach(bound) {
+                Reach::Loopback => {
+                    println!("                any process on this machine may pull, push and");
+                    println!("                delete; the listener is on loopback, so nothing");
+                    println!("                else can reach it");
+                }
+                // The variable phrase ends the first line, so a long address
+                // cannot push the fixed text past the width of the banner.
+                Reach::Network(who) => {
+                    println!("  !! OPEN REGISTRY - {who}");
+                    println!("  !! may pull, push and delete. No credential is asked for, and");
+                    println!("  !! none would be accepted.");
+                    println!("  !! --auth-mode public-pull gates push; private gates pulls too.");
+                }
+            }
         }
         AuthPolicy::PublicPull { write } => {
-            // Say what is open as well as what is shut: an operator reading
-            // this line is entitled to learn from it that the catalog and the
-            // UI are now world-readable.
             println!("  auth mode     public-pull - anonymous pull, API key to push");
+            println!("                the catalog, every tag, every manifest and the whole");
+            println!("                UI are readable by anyone who can reach the port");
             if generated.write {
                 println!("  write key     {}   (generated)", write.expose());
             }
         }
         AuthPolicy::Private { read, write } => {
-            println!("  auth mode     private - API key, as an HTTP Basic password");
+            println!("  auth mode     private - a key for everything, as an HTTP Basic password");
+            println!("                /v2/, the discovery API and the UI are all behind it;");
+            println!("                the read key reads, the write key does both");
             if generated.read {
                 println!("  read key      {}   (generated)", read.expose());
             }
@@ -140,6 +166,34 @@ fn print_auth(auth: &AuthPolicy, generated: Option<Generated>) {
     }
     if generated.read || generated.write {
         println!("  !! a generated key is printed once and is not stored anywhere.");
+    }
+}
+
+/// Who can reach the listener, for the `open` warning.
+enum Reach {
+    /// Bound to loopback: this machine only.
+    Loopback,
+    /// Bound anywhere else, with the phrase naming who that is.
+    Network(String),
+}
+
+/// Classify the bound address for the `open` warning.
+///
+/// The unspecified address is split off from a specific one because
+/// `0.0.0.0:3110` is not somewhere anything connects *to*, and a warning that
+/// quotes it back reads as a machine address rather than as the reach it
+/// stands for. A specific address is quoted, because it is the one an operator
+/// can check against what they meant to bind.
+fn reach(bound: SocketAddr) -> Reach {
+    if bound.ip().is_loopback() {
+        Reach::Loopback
+    } else if bound.ip().is_unspecified() {
+        Reach::Network(format!(
+            "anyone who can reach this machine on port {}",
+            bound.port()
+        ))
+    } else {
+        Reach::Network(format!("anyone who can reach {bound}"))
     }
 }
 
@@ -186,4 +240,48 @@ async fn shutdown() {
         _ = terminate => {}
     }
     tracing::info!("shutting down");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The warning is a claim about who can reach the port, so the line
+    /// between "this machine" and "the network" has to be the bind address
+    /// and not the mode. Getting it wrong in either direction costs the
+    /// banner its credibility: a laptop told it is exposed teaches its
+    /// operator to skim, and a `0.0.0.0` told it is private is the failure
+    /// the warning exists to prevent.
+    #[test]
+    fn only_a_loopback_bind_is_unreachable_from_the_network() {
+        let addr = |s: &str| s.parse::<SocketAddr>().expect("valid address");
+
+        for local in ["127.0.0.1:3110", "127.0.0.5:3110", "[::1]:3110"] {
+            assert!(
+                matches!(reach(addr(local)), Reach::Loopback),
+                "{local} is this machine only"
+            );
+        }
+
+        let Reach::Network(any) = reach(addr("0.0.0.0:3110")) else {
+            panic!("every interface is the network");
+        };
+        assert!(
+            any.contains("port 3110") && !any.contains("0.0.0.0"),
+            "the unspecified address is not somewhere anything connects to: {any}"
+        );
+
+        let Reach::Network(one) = reach(addr("192.168.1.5:3110")) else {
+            panic!("a routable address is the network");
+        };
+        assert!(
+            one.contains("192.168.1.5:3110"),
+            "a specific bind is quoted back to be checked: {one}"
+        );
+
+        assert!(
+            matches!(reach(addr("[::]:3110")), Reach::Network(_)),
+            "the v6 unspecified address is every interface too"
+        );
+    }
 }
