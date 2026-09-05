@@ -128,8 +128,8 @@ pub enum Command {
 pub struct ServeArgs {
     /// Address to listen on, as `<host>:<port>`.
     ///
-    /// `127.0.0.1:5000` for this machine only, `0.0.0.0:5000` for every IPv4
-    /// interface, `[::]:5000` for every interface on both families. Port `0`
+    /// `127.0.0.1:3110` for this machine only, `0.0.0.0:3110` for every IPv4
+    /// interface, `[::]:3110` for every interface on both families. Port `0`
     /// binds an ephemeral port, which the startup banner then reports.
     ///
     /// One value rather than separate host and port flags, because a bind
@@ -140,7 +140,7 @@ pub struct ServeArgs {
     /// A host, not a hostname: a name can resolve to several addresses and a
     /// listener binds exactly one, so resolving here would only hide which one
     /// we picked.
-    #[arg(long, default_value = "127.0.0.1:5000", env = "SUMM_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:3110", env = "SUMM_LISTEN")]
     pub listen: SocketAddr,
 
     /// Directory for blobs and metadata.

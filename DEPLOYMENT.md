@@ -73,7 +73,7 @@ User=summ
 Group=summ
 EnvironmentFile=/etc/summ.env
 Environment=SUMM_LOG=summ=info,summ_server=info,tower_http=info
-ExecStart=/usr/local/bin/summ serve --listen 127.0.0.1:5000 --data-dir /var/lib/summ
+ExecStart=/usr/local/bin/summ serve --listen 127.0.0.1:3110 --data-dir /var/lib/summ
 Restart=always
 RestartSec=5
 
@@ -113,7 +113,7 @@ rather than decorative.
 ```sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now summ.service
-curl -fsS http://127.0.0.1:5000/v2/    # the spec's own liveness probe
+curl -fsS http://127.0.0.1:3110/v2/    # the spec's own liveness probe
 ```
 
 **If the data directory is its own mount, keep `RequiresMountsFor`.** Without
@@ -132,7 +132,7 @@ TLS. An example Caddyfile:
 
 ```caddyfile
 registry.example.com {
-	reverse_proxy 127.0.0.1:5000
+	reverse_proxy 127.0.0.1:3110
 
 	# Never re-encode blob bodies: layer tarballs are already compressed, the
 	# digest is computed over the plaintext, and the byte path is the one place

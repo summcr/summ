@@ -76,8 +76,8 @@ ENV SUMM_DATA_DIR=/var/lib/summ \
     SUMM_LOG=summ=info,summ_server=info,tower_http=info
 VOLUME ["/var/lib/summ"]
 
-# The container always serves on 5000, and that is not configurable here. A
-# host wanting a different number publishes one — `-p 8080:5000` — because the
+# The container always serves on 3110, and that is not configurable here. A
+# host wanting a different number publishes one — `-p 8080:3110` — because the
 # container has its own network namespace, so the port inside cannot collide
 # with anything and there is nothing for a knob to solve. Fixing it keeps
 # EXPOSE, the healthcheck and every compose file or `containerPort` in
@@ -85,16 +85,16 @@ VOLUME ["/var/lib/summ"]
 #
 # `0.0.0.0`, not clap's `127.0.0.1` default: a published port forwards to the
 # container's external interface, which a loopback listener never sees.
-ENV SUMM_LISTEN=0.0.0.0:5000
-EXPOSE 5000
+ENV SUMM_LISTEN=0.0.0.0:3110
+EXPOSE 3110
 
 USER summ:summ
 
 # `GET /v2/` is the spec's own liveness probe: it answers 200 with an empty
-# object and touches neither the blob store nor a scan. 5000 is a constant
+# object and touches neither the blob store nor a scan. 3110 is a constant
 # here for the same reason it is above: the container's port does not move.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:5000/v2/ || exit 1
+    CMD curl -fsS http://127.0.0.1:3110/v2/ || exit 1
 
 # Split so that `docker run <image> serve --engine redb` replaces the
 # arguments and keeps the binary. The server already stops on SIGTERM and
