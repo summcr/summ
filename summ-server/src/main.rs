@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use summ_server::auth::{AuthPolicy, Generated};
-use summ_server::backend::Backend;
+use summ_server::backend::{Backend, Engine};
 use summ_server::config::{Cli, Command, ServeArgs};
 use summ_server::{router, AppState};
 use tracing_subscriber::EnvFilter;
@@ -55,7 +55,17 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .exit()
     });
 
-    let backend = Backend::open(&args.data_dir, args.engine, args.registry_options())?;
+    // RocksDB, always: `Engine` is a test seam now, not a choice a deployment
+    // makes - see its doc for why it stopped being a flag.
+    //
+    // Reported the same way as the auth conflict above, and for the same
+    // reason: these messages name a path and say what to do about it, and `?`
+    // would hand them to `Termination`, which prints a `String` through
+    // `Debug` - quoted, escaped, and under a bare `Error:`.
+    let backend = Backend::open(&args.data_dir, Engine::Rocks, args.registry_options())
+        .unwrap_or_else(|message| {
+            clap::Error::raw(clap::error::ErrorKind::Io, format!("{message}\n")).exit()
+        });
     // Started before the router, because the router needs the handle the pull
     // path records into. Disabled hands back a counter that discards, so
     // `--no-pull-counts` costs a branch rather than a second wiring.
@@ -85,7 +95,6 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("  listening on  {}:{}", bound.ip(), bound.port());
     println!("  registry      http://{}/v2/", reachable(bound));
     println!("  data dir      {}", data_dir.display());
-    println!("  engine        {:?}", args.engine);
     if args.allow_missing_references {
         println!("  references    unvalidated (--allow-missing-references)");
     }

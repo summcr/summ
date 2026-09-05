@@ -8,10 +8,21 @@ license.workspace = true
 summ-core.workspace = true
 serde.workspace = true
 postcard.workspace = true
-redb.workspace = true
+redb = { workspace = true, optional = true }
 rocksdb.workspace = true
 parking_lot = "0.12"
 lru = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
+# This crate, with the second engine turned on, so its own tests can run the
+# suite against both. Off by default and requested only here, which is what
+# keeps redb out of anything that ships.
+summ-meta = { path = ".", features = ["redb"] }
+
+[features]
+# redb is a test instrument: a second `MetaEngine` implementation whose only
+# job is to prove nothing has leaked past the trait. It is not a deployment
+# option, so it is not a default - the shipped binary cannot open a redb store
+# and does not carry the code to try.
+redb = ["dep:redb"]

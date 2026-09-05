@@ -12,7 +12,7 @@
 #   ./scripts/large-image-e2e.sh                    # defaults: pytorch, 4 threads
 #   ./scripts/large-image-e2e.sh --image alpine:3 --threads 8 --rounds 3
 #   ./scripts/large-image-e2e.sh --reuse-data --no-build   # re-pull, skip push
-#   ./scripts/large-image-e2e.sh --auth --engine redb
+#   ./scripts/large-image-e2e.sh --auth
 #
 # Image bytes come from the local docker daemon when it holds the image
 # (`docker save` writes an OCI layout, which `oras cp` pushes straight from) and
@@ -32,7 +32,6 @@ DEST_TAG=""                 # derived from IMAGE unless given
 PORT=15000                  # not 5000: on macOS that is AirPlay Receiver
 THREADS=4
 ROUNDS=1
-ENGINE="rocks"
 SOURCE="auto"               # auto | docker | remote
 DO_BUILD=1
 DO_VERIFY=1
@@ -58,7 +57,6 @@ Options:
   --port N             listen port (default: 15000)
   --threads N          concurrent pullers (default: 4)
   --rounds N           full pulls per thread (default: 1)
-  --engine rocks|redb  metadata engine (default: rocks)
   --source MODE        auto | docker | remote (default: auto)
   --data-dir DIR       registry data directory (default: under $TMPDIR)
   --layout-dir DIR     OCI layout cache for the docker path
@@ -80,7 +78,6 @@ while [[ $# -gt 0 ]]; do
         --port)         PORT="$2"; shift 2 ;;
         --threads)      THREADS="$2"; shift 2 ;;
         --rounds)       ROUNDS="$2"; shift 2 ;;
-        --engine)       ENGINE="$2"; shift 2 ;;
         --source)       SOURCE="$2"; shift 2 ;;
         --data-dir)     DATA_DIR="$2"; shift 2 ;;
         --layout-dir)   LAYOUT_DIR="$2"; shift 2 ;;
@@ -184,10 +181,10 @@ fi
 step "Configuration"
 info "image      $IMAGE"
 info "target     $REGISTRY/$DEST_REPO:$DEST_TAG"
-info "engine     $ENGINE   threads $THREADS   rounds $ROUNDS"
+info "threads    $THREADS   rounds $ROUNDS"
 info "data dir   $DATA_DIR"
 info "verify     $([[ $DO_VERIFY -eq 1 ]] && echo 'sha256 every blob' || echo 'off')"
-info "auth       $([[ $AUTH -eq 1 ]] && echo 'all' || echo 'none')"
+info "auth mode  $([[ $AUTH -eq 1 ]] && echo 'private' || echo 'open')"
 
 # ------------------------------------------------------------------- build ---
 
@@ -208,7 +205,7 @@ elif [[ ! -d "$DATA_DIR" ]]; then
 fi
 mkdir -p "$DATA_DIR"
 
-SERVE_ARGS=(serve --listen "$REGISTRY" --data-dir "$DATA_DIR" --engine "$ENGINE")
+SERVE_ARGS=(serve --listen "$REGISTRY" --data-dir "$DATA_DIR")
 if [[ $AUTH -eq 1 ]]; then
     SERVE_ARGS+=(--auth-mode private --read-apikey "$READ_KEY" --write-apikey "$WRITE_KEY")
 fi

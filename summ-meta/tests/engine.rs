@@ -11,10 +11,11 @@ use std::sync::Arc;
 
 use summ_core::types::{CounterBucket, SCHEMA_VERSION};
 use summ_core::{keys, Digest, Timestamp};
-use summ_meta::{
-    version, MetaEngine, Migrations, RedbEngine, RepoInterner, RocksEngine, WriteBatch,
-};
+#[cfg(feature = "redb")]
+use summ_meta::RedbEngine;
+use summ_meta::{version, MetaEngine, Migrations, RepoInterner, RocksEngine, WriteBatch};
 
+#[cfg(feature = "redb")]
 fn redb() -> (RedbEngine, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let db = RedbEngine::open(dir.path().join("test.db")).unwrap();
@@ -47,6 +48,7 @@ macro_rules! engine_tests {
     };
 }
 
+#[cfg(feature = "redb")]
 engine_tests!(
     redb_engine,
     redb,

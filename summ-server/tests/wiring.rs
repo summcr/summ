@@ -585,6 +585,7 @@ async fn a_deleted_name_can_be_pushed_again_before_the_sweep_runs() {
 /// Both engines, because a repo drop is nine `DeletePrefix` ops and the two
 /// engines implement that op completely differently - a RocksDB range
 /// tombstone against a redb `retain_in`.
+#[cfg(feature = "redb")]
 #[tokio::test]
 async fn a_repository_drop_works_on_the_second_engine_too() {
     for engine in [Engine::Rocks, Engine::Redb] {
@@ -686,6 +687,7 @@ async fn a_push_survives_the_process_that_took_it() {
     assert_eq!(layer.body, Bytes::from_static(LAYER));
 }
 
+#[cfg(feature = "redb")]
 #[tokio::test]
 async fn the_same_push_and_pull_works_on_redb() {
     // Not a formality: the whole binary running on the second engine is a
@@ -2145,4 +2147,41 @@ async fn disabled_counters_record_nothing_and_still_answer() {
     let body = h.get("/api/v1/pull-counts/demo/app").await.json();
     assert_eq!(body["totals"]["manifest_pulls"], 0);
     assert_eq!(body["days"].as_array().unwrap().len(), 30);
+}
+
+/// The safety net left behind by removing `--engine`.
+///
+/// The engines keep their state in different files under `meta/`, so a build
+/// with no redb in it would otherwise open RocksDB *beside* an older install's
+/// redb store and stamp a fresh, empty registry - blobs all present on disk,
+/// nothing referencing them, and no error anywhere. That is the quietest way
+/// there is to appear to have lost a registry, so opening stops instead.
+///
+/// The file is written as bytes rather than through redb, because the check is
+/// about a path existing and the test has to run in a build that cannot open a
+/// redb store at all.
+#[tokio::test]
+async fn rocksdb_refuses_to_open_beside_a_redb_store() {
+    let dir = TempDir::new().expect("tempdir");
+    let meta = dir.path().join("meta");
+    std::fs::create_dir_all(&meta).expect("meta dir");
+    std::fs::write(meta.join("summ.redb"), b"not really a redb store").expect("stranded store");
+
+    let message = Backend::open(dir.path(), Engine::Rocks, RegistryOptions::default())
+        .err()
+        .expect("must refuse rather than start empty");
+    assert!(message.contains("summ.redb"), "{message}");
+    assert!(
+        message.contains("Move that file aside"),
+        "the operator has to be told what to do next: {message}"
+    );
+    // A wrapped literal whose continuations lost their backslashes still
+    // compiles and still contains every word asserted above - it just reaches
+    // the operator with runs of indentation in the middle of the sentence.
+    assert!(!message.contains("  "), "unwrapped literal: {message}");
+
+    assert!(
+        !meta.join("CURRENT").exists(),
+        "nothing may be created in a directory we refused to open"
+    );
 }

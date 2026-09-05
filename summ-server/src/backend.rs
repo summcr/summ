@@ -38,7 +38,9 @@ use async_trait::async_trait;
 use axum::body::{Body, Bytes};
 use futures_util::StreamExt;
 use summ_core::{Digest, ManifestRecord, Platform, SummError, TagEventKind, Timestamp};
-use summ_meta::{MetaEngine, RedbEngine, RocksEngine};
+#[cfg(feature = "redb")]
+use summ_meta::RedbEngine;
+use summ_meta::{MetaEngine, RocksEngine};
 use summ_registry::error::RegistryError;
 use summ_registry::{
     CountDelta, CountSubject, Reference as OpsReference, Registry as Ops, RegistryOptions,
@@ -56,16 +58,47 @@ use crate::seam::{
     RepoSummary, TagEventInfo, TagInfo, Tally, UploadBody, COUNT_CEILING, TAGS_PER_MANIFEST,
 };
 
-/// Which metadata engine `serve` opens.
+/// Which metadata engine [`Backend::open`] opens.
 ///
-/// RocksDB is the v1 decision. redb is not a fallback plan - it is the second
-/// implementation that keeps [`MetaEngine`] honest, and being able to run the
-/// whole binary on it is a stronger check than running the trait's own tests
-/// against it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+/// RocksDB is the v1 decision and the only one a released binary can make.
+/// There is no `--engine` flag, and [`Engine::Redb`] exists only under this
+/// crate's `redb` feature, which nothing but the test build turns on.
+///
+/// redb is not a fallback plan - it is the second implementation that keeps
+/// [`MetaEngine`] honest, and running the whole binary on it is a stronger
+/// check than running the trait's own tests against it. It stopped being a
+/// flag because the two engines keep their state in *different files* under
+/// `meta/`: passing the other one opened an empty registry with every blob
+/// still on disk and nothing referencing it, which from the outside is
+/// indistinguishable from having lost the lot. A verification instrument with
+/// that failure mode does not belong on an operator's command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     Rocks,
+    #[cfg(feature = "redb")]
     Redb,
+}
+
+/// Refuse to open RocksDB in a directory that holds a redb store.
+///
+/// The only way to have one is an older build's `--engine redb`, and that
+/// operator's metadata is in the file - not in the RocksDB store this would
+/// otherwise create beside it and stamp as a fresh, empty registry. The blobs
+/// would all still be on disk, unreferenced and unreachable, which is the
+/// quietest way there is to appear to have lost a registry. So: stop, and say
+/// where the data actually is.
+fn refuse_stranded_redb(meta_dir: &Path) -> Result<(), String> {
+    let stranded = meta_dir.join("summ.redb");
+    if stranded.exists() {
+        return Err(format!(
+            "{} is a redb metadata store, which this build cannot open - redb was \
+             a verification engine and `--engine` no longer exists. Opening RocksDB \
+             here would start an empty registry beside your metadata, so nothing has \
+             been opened. Move that file aside to start fresh in this directory.",
+            stranded.display()
+        ));
+    }
+    Ok(())
 }
 
 /// How many keys one turn of a bounded count reads.
@@ -210,13 +243,18 @@ impl Backend {
 
         let migrations = summ_meta::Migrations::new();
         let engine: Arc<dyn MetaEngine> = match engine {
-            Engine::Rocks => Arc::new(
-                summ_meta::version::open(
-                    RocksEngine::open(&meta_dir).map_err(|e| format!("opening RocksDB: {e}"))?,
-                    &migrations,
+            Engine::Rocks => {
+                refuse_stranded_redb(&meta_dir)?;
+                Arc::new(
+                    summ_meta::version::open(
+                        RocksEngine::open(&meta_dir)
+                            .map_err(|e| format!("opening RocksDB: {e}"))?,
+                        &migrations,
+                    )
+                    .map_err(|e| format!("opening metadata store: {e}"))?,
                 )
-                .map_err(|e| format!("opening metadata store: {e}"))?,
-            ),
+            }
+            #[cfg(feature = "redb")]
             Engine::Redb => Arc::new(
                 summ_meta::version::open(
                     RedbEngine::open(meta_dir.join("summ.redb"))

@@ -36,3 +36,11 @@ uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# The wiring suite runs the whole binary on the second engine, which needs this
+# crate's own `redb` feature on for the test build and off everywhere else.
+summ-server = { path = ".", features = ["redb"] }
+
+[features]
+# Not a default: see summ-meta's manifest. Enabling it adds `Engine::Redb`,
+# which only a test can name now that `--engine` is gone.
+redb = ["summ-meta/redb"]

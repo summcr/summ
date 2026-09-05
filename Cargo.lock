@@ -1310,6 +1310,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "summ-core",
+ "summ-meta",
  "tempfile",
 ]
 
@@ -1343,6 +1344,7 @@ dependencies = [
  "summ-core",
  "summ-meta",
  "summ-registry",
+ "summ-server",
  "summ-storage",
  "tempfile",
  "tokio",

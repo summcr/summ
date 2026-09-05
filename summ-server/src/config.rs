@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::auth::{AuthPolicy, Generated};
-use crate::backend::Engine;
 
 /// Default ceiling on one upload request body, in bytes.
 ///
@@ -156,14 +155,6 @@ pub struct ServeArgs {
     /// a rename across devices is not a rename.
     #[arg(long, default_value = "./data", env = "SUMM_DATA_DIR")]
     pub data_dir: PathBuf,
-
-    /// Metadata engine.
-    ///
-    /// RocksDB is the v1 decision. redb is the second implementation that keeps
-    /// `MetaEngine` honest, and running the whole binary on it is a stronger
-    /// check of that boundary than running the trait's tests against it.
-    #[arg(long, value_enum, default_value = "rocks", env = "SUMM_ENGINE")]
-    pub engine: Engine,
 
     /// Accept a manifest whose layers or child manifests are not present yet.
     ///

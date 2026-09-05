@@ -19,3 +19,5 @@ oci-spec = { version = "0.10", default-features = false, features = ["image"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# The fixtures build on redb, so the tests need the engine the library does not.
+summ-meta = { workspace = true, features = ["redb"] }
