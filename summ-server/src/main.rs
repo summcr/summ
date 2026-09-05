@@ -113,20 +113,23 @@ fn print_auth(auth: &AuthPolicy, generated: Option<Generated>) {
         write: false,
     });
     match auth {
-        AuthPolicy::None => {
-            println!("  auth          none - anonymous read-write (--auth write to gate push)");
+        AuthPolicy::Open => {
+            println!(
+                "  auth mode     open - anonymous pull and push \
+                 (--auth-mode public-pull to gate push)"
+            );
         }
-        AuthPolicy::Write { write } => {
+        AuthPolicy::PublicPull { write } => {
             // Say what is open as well as what is shut: an operator reading
             // this line is entitled to learn from it that the catalog and the
             // UI are now world-readable.
-            println!("  auth          write - anonymous pull, API key to push");
+            println!("  auth mode     public-pull - anonymous pull, API key to push");
             if generated.write {
                 println!("  write key     {}   (generated)", write.expose());
             }
         }
-        AuthPolicy::All { read, write } => {
-            println!("  auth          all - API key, as an HTTP Basic password");
+        AuthPolicy::Private { read, write } => {
+            println!("  auth mode     private - API key, as an HTTP Basic password");
             if generated.read {
                 println!("  read key      {}   (generated)", read.expose());
             }

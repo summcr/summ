@@ -1,12 +1,20 @@
 //! API-key authentication.
 //!
-//! One axis, three points: `--auth` says *which requests require a key*.
-//! `none`, the default, requires none - `summ serve` with no arguments is an
-//! anonymous read-write registry, which is what makes it usable in one
-//! command. `write` requires the write key for everything that changes the
-//! registry and serves every read to anyone, which is the shape of a public
-//! registry: anonymous pull, authenticated push. `all` requires a key for
-//! everything, with a read key that reads and a write key that does both.
+//! One axis, three points: `--auth-mode` says how open the registry is.
+//! `open`, the default, requires no credential at all - `summ serve` with no
+//! arguments is an anonymous read-write registry, which is what makes it
+//! usable in one command. `public-pull` serves every read to anyone and
+//! requires the write key for everything that changes the registry, which is
+//! the shape of a public registry: anonymous pull, authenticated push.
+//! `private` requires a key for everything, with a read key that reads and a
+//! write key that does both.
+//!
+//! The names describe the registry rather than the mechanism, and the middle
+//! one names an operation where the other two name a posture - deliberately.
+//! `open` and `private` say all there is to say on their own; a bare `public`
+//! would not, because a public repository on a hosted registry is one anyone
+//! may *pull* while summ's default is one anyone may also push. The word is
+//! contested exactly here, so the name settles it.
 //!
 //! # Why `Basic`, when the spec's example is `Bearer`
 //!
@@ -30,7 +38,7 @@
 //!
 //! # What is protected
 //!
-//! Under `all`, everything: `/v2/`, `/api/v1/` and the UI, through one
+//! Under `private`, everything: `/v2/`, `/api/v1/` and the UI, through one
 //! middleware in [`crate::app::router`]. There is no exemption list,
 //! deliberately - an exemption is a hole that has to be re-argued every time a
 //! route is added, and the two candidates both fail on inspection. `GET /v2/`
@@ -40,9 +48,10 @@
 //! an anonymous browser only moves the prompt to the first `fetch`, where a
 //! native dialog on an XHR is a worse experience than one on the document.
 //!
-//! Under `write` the line is drawn by [`Access::of`] and by nothing else: a
-//! rule about what a request *does*, applied to every route alike, rather than
-//! the list of routes an exemption would have been. The consequence is worth
+//! Under `public-pull` the line is drawn by [`Access::of`] and by nothing
+//! else: a
+//! rule about what a request *does*, applied to every route alike, rather
+//! than the list of routes an exemption would have been. The consequence is worth
 //! stating plainly, because it is the mode and not a hole in it - `_catalog`,
 //! every tag list, every manifest and the whole UI are readable by anyone who
 //! can reach the port.
@@ -55,11 +64,12 @@
 //! it is misconfigured.
 //!
 //! Note what this does *not* buy, because it is tempting to assume it: under
-//! `write` it does not make `docker login` or `oras login` validate a key.
+//! `public-pull` it does not make `docker login` or `oras login` validate a
+//! key.
 //! Those clients ping `GET /v2/` without a credential and only send one when
 //! the answer is a `401`; here the answer is `200`, so nothing is sent and
 //! nothing can be rejected. `login` succeeds on any key, and the push is the
-//! first thing that checks it. Under `all` the ping *is* a `401`, the client
+//! first thing that checks it. Under `private` the ping *is* a `401`, the client
 //! retries with the credential, and a wrong key fails at login as expected.
 
 use std::fmt;
@@ -163,9 +173,10 @@ impl ApiKey {
     pub fn matches(&self, presented: &str) -> bool {
         let expected = self.0.as_bytes();
         let got = presented.as_bytes();
-        // A key is never empty - `AuthPolicy::new` rejects one - but an empty
-        // *presented* value must not be allowed to match by exhausting the
-        // loop without a difference.
+        // A key is never empty - the policy constructors reject one - but an
+        // empty
+        // *presented* value must not be allowed to match by exhausting the loop
+        // without a difference.
         if expected.is_empty() || got.is_empty() {
             return false;
         }
@@ -194,14 +205,15 @@ impl fmt::Debug for ApiKey {
 /// to be, so it is printed once and only then.
 #[derive(Debug, Clone)]
 pub enum AuthPolicy {
-    /// `--auth none`: no credential required, to read or to write. The
+    /// `--auth-mode open`: no credential required, to read or to write. The
     /// default.
-    None,
-    /// `--auth write`: the write key for anything that changes the registry,
-    /// and anonymous reads.
-    Write { write: ApiKey },
-    /// `--auth all`: a read key and a write key. The write key also reads.
-    All { read: ApiKey, write: ApiKey },
+    Open,
+    /// `--auth-mode public-pull`: the write key for anything that changes the
+    /// registry, and anonymous reads.
+    PublicPull { write: ApiKey },
+    /// `--auth-mode private`: a read key and a write key. The write key also
+    /// reads.
+    Private { read: ApiKey, write: ApiKey },
 }
 
 /// Why a request was not authorized.
@@ -223,24 +235,24 @@ pub enum AuthError {
 }
 
 impl AuthPolicy {
-    /// Build the `write` policy: one key, and it is required for writes alone.
+    /// Build the `public-pull` policy: one key, required for writes alone.
     ///
     /// Returns the policy and whether the key was generated, because the
     /// banner prints a generated key and must never print a supplied one.
-    pub fn for_writes(write: Option<String>) -> Result<(Self, Generated), String> {
+    pub fn for_public_pull(write: Option<String>) -> Result<(Self, Generated), String> {
         nonempty("write", &write)?;
         let generated = Generated {
             read: false,
             write: write.is_none(),
         };
-        let policy = AuthPolicy::Write {
+        let policy = AuthPolicy::PublicPull {
             write: write.map(ApiKey::new).unwrap_or_else(ApiKey::generate),
         };
         Ok((policy, generated))
     }
 
-    /// Build the `all` policy from a pair of optional keys.
-    pub fn for_everything(
+    /// Build the `private` policy from a pair of optional keys.
+    pub fn for_private(
         read: Option<String>,
         write: Option<String>,
     ) -> Result<(Self, Generated), String> {
@@ -250,7 +262,7 @@ impl AuthPolicy {
             read: read.is_none(),
             write: write.is_none(),
         };
-        let policy = AuthPolicy::All {
+        let policy = AuthPolicy::Private {
             read: read.map(ApiKey::new).unwrap_or_else(ApiKey::generate),
             write: write.map(ApiKey::new).unwrap_or_else(ApiKey::generate),
         };
@@ -258,25 +270,24 @@ impl AuthPolicy {
     }
 
     /// Whether the authentication middleware has anything to do. False for
-    /// [`AuthPolicy::None`] alone: `write` still has to see every request, or
-    /// the writes it guards arrive unexamined.
+    /// [`AuthPolicy::Open`] alone: `public-pull` still has to see every
+    /// request, or the writes it guards arrive unexamined.
     pub fn is_enabled(&self) -> bool {
-        !matches!(self, AuthPolicy::None)
+        !matches!(self, AuthPolicy::Open)
     }
 
     /// Decide one request.
     pub fn authorize(&self, method: &Method, headers: &HeaderMap) -> Result<(), AuthError> {
         // `read` is `None` where no key is needed to read, which puts the two
         // guarded modes on one path: what follows is the same question asked
-        // of one key or of two. (`None` here is `Option`'s; the policy's is
-        // always written `AuthPolicy::None`.)
+        // of one key or of two.
         let (read, write) = match self {
-            AuthPolicy::None => return Ok(()),
-            AuthPolicy::Write { write } => (None, write),
-            AuthPolicy::All { read, write } => (Some(read), write),
+            AuthPolicy::Open => return Ok(()),
+            AuthPolicy::PublicPull { write } => (None, write),
+            AuthPolicy::Private { read, write } => (Some(read), write),
         };
         let Some(raw) = headers.get(header::AUTHORIZATION) else {
-            // The anonymous read that `--auth write` exists to serve. An
+            // The anonymous read that `public-pull` exists to serve. An
             // anonymous *write* is still the `401` that makes a client log in.
             return match Access::of(method) {
                 Access::Read if read.is_none() => Ok(()),
@@ -295,9 +306,10 @@ impl AuthPolicy {
         if write.matches(&presented) {
             return Ok(());
         }
-        // Under `write` there is no read key, so a credential that is not the
-        // write key is wrong however harmless the request - see the module
-        // doc on why a presented credential is checked even where none was
+        // Under `public-pull` there is no read key, so a credential that is not
+        // the
+        // write key is wrong however harmless the request - see the module doc
+        // on why a presented credential is checked even where none was
         // required.
         if let Some(read) = read {
             if read.matches(&presented) {
@@ -323,7 +335,7 @@ fn nonempty(label: &str, key: &Option<String>) -> Result<(), String> {
     }
 }
 
-/// Which keys [`AuthPolicy::new`] had to invent.
+/// Which keys [`AuthPolicy`]'s constructors had to invent.
 #[derive(Debug, Clone, Copy)]
 pub struct Generated {
     pub read: bool,
@@ -465,17 +477,17 @@ mod tests {
         map
     }
 
-    /// `--auth all`.
-    fn policy() -> AuthPolicy {
-        AuthPolicy::All {
+    /// `--auth-mode private`.
+    fn private() -> AuthPolicy {
+        AuthPolicy::Private {
             read: ApiKey::new("read-key"),
             write: ApiKey::new("write-key"),
         }
     }
 
-    /// `--auth write`.
-    fn public_read() -> AuthPolicy {
-        AuthPolicy::Write {
+    /// `--auth-mode public-pull`.
+    fn public_pull() -> AuthPolicy {
+        AuthPolicy::PublicPull {
             write: ApiKey::new("write-key"),
         }
     }
@@ -549,16 +561,16 @@ mod tests {
     }
 
     #[test]
-    fn none_admits_everything() {
-        let anon = AuthPolicy::None;
+    fn open_admits_everything() {
+        let anon = AuthPolicy::Open;
         assert_eq!(anon.authorize(&Method::GET, &HeaderMap::new()), Ok(()));
         assert_eq!(anon.authorize(&Method::PUT, &HeaderMap::new()), Ok(()));
         assert!(!anon.is_enabled());
     }
 
     #[test]
-    fn write_mode_reads_anonymously_and_challenges_a_write() {
-        let policy = public_read();
+    fn public_pull_reads_anonymously_and_challenges_a_write() {
+        let policy = public_pull();
         assert!(
             policy.is_enabled(),
             "the middleware has to run, or the writes it guards arrive unexamined"
@@ -581,8 +593,8 @@ mod tests {
     }
 
     #[test]
-    fn write_mode_admits_the_write_key_to_everything() {
-        let policy = public_read();
+    fn public_pull_admits_the_write_key_to_everything() {
+        let policy = public_pull();
         let headers = headers("Bearer write-key");
         for method in [
             Method::GET,
@@ -597,12 +609,12 @@ mod tests {
     }
 
     #[test]
-    fn write_mode_checks_a_credential_it_did_not_require() {
+    fn public_pull_checks_a_credential_it_did_not_require() {
         // Not for `login`'s sake - a client pings `/v2/` bare, gets its `200`
         // and never sends a key to be judged. For the client that does send
         // one: answering `200` to a wrong credential makes it wrong nowhere
         // until the push.
-        let policy = public_read();
+        let policy = public_pull();
         assert_eq!(
             policy.authorize(&Method::GET, &headers("Bearer nope")),
             Err(AuthError::Invalid)
@@ -620,20 +632,20 @@ mod tests {
     }
 
     #[test]
-    fn write_mode_generates_the_one_key_it_needs() {
-        let (policy, generated) = AuthPolicy::for_writes(None).expect("valid");
+    fn public_pull_generates_the_one_key_it_needs() {
+        let (policy, generated) = AuthPolicy::for_public_pull(None).expect("valid");
         assert!(generated.write, "the write key had to be invented");
         assert!(!generated.read, "there is no read key to report");
-        let AuthPolicy::Write { write } = &policy else {
-            panic!("for_writes must build the write policy");
+        let AuthPolicy::PublicPull { write } = &policy else {
+            panic!("for_public_pull must build the public-pull policy");
         };
         assert_eq!(write.expose().len(), 64);
-        assert!(AuthPolicy::for_writes(Some("  ".to_owned())).is_err());
+        assert!(AuthPolicy::for_public_pull(Some("  ".to_owned())).is_err());
     }
 
     #[test]
     fn the_read_key_reads_but_does_not_write() {
-        let policy = policy();
+        let policy = private();
         let headers = headers("Bearer read-key");
         assert_eq!(policy.authorize(&Method::GET, &headers), Ok(()));
         assert_eq!(policy.authorize(&Method::HEAD, &headers), Ok(()));
@@ -649,7 +661,7 @@ mod tests {
 
     #[test]
     fn the_write_key_also_reads() {
-        let policy = policy();
+        let policy = private();
         let headers = headers("Bearer write-key");
         for method in [
             Method::GET,
@@ -665,7 +677,7 @@ mod tests {
 
     #[test]
     fn one_key_used_for_both_keeps_its_write_access() {
-        let policy = AuthPolicy::All {
+        let policy = AuthPolicy::Private {
             read: ApiKey::new("same"),
             write: ApiKey::new("same"),
         };
@@ -677,7 +689,7 @@ mod tests {
 
     #[test]
     fn a_missing_or_wrong_credential_is_distinguished() {
-        let policy = policy();
+        let policy = private();
         assert_eq!(
             policy.authorize(&Method::GET, &HeaderMap::new()),
             Err(AuthError::Missing)
@@ -728,7 +740,7 @@ mod tests {
 
     #[test]
     fn a_key_never_reaches_a_log_through_debug() {
-        let policy = policy();
+        let policy = private();
         let rendered = format!("{policy:?}");
         assert!(!rendered.contains("read-key"), "{rendered}");
         assert!(!rendered.contains("write-key"), "{rendered}");
@@ -736,14 +748,14 @@ mod tests {
 
     #[test]
     fn an_empty_supplied_key_is_a_startup_error() {
-        assert!(AuthPolicy::for_everything(Some("  ".to_owned()), None).is_err());
-        assert!(AuthPolicy::for_everything(None, Some(String::new())).is_err());
+        assert!(AuthPolicy::for_private(Some("  ".to_owned()), None).is_err());
+        assert!(AuthPolicy::for_private(None, Some(String::new())).is_err());
     }
 
     #[test]
     fn absent_keys_are_generated_and_reported_as_such() {
         let (policy, generated) =
-            AuthPolicy::for_everything(Some("mine".to_owned()), None).expect("valid");
+            AuthPolicy::for_private(Some("mine".to_owned()), None).expect("valid");
         assert!(!generated.read);
         assert!(generated.write, "the write key had to be invented");
         assert_eq!(

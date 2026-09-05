@@ -369,8 +369,9 @@ async function repositoryPage(name, query) {
  * yes by reflex.
  *
  * There is no gating flag behind this on the server. Deleting a repository is
- * a write, `--auth` is the axis that decides who may write, and a second axis
- * for one route would be a second policy to keep in agreement with the first.
+ * a write, `--auth-mode` is the axis that decides who may write, and a second
+ * axis for one route would be a second policy to keep in agreement with the
+ * first.
  * So on an open registry this button works for whoever can reach the port,
  * exactly as `docker push` and `DELETE /v2/.../manifests/` already do.
  */

@@ -37,21 +37,21 @@ sandbox can still see it.
 
 ### Credentials, if any
 
-`--auth none` is the default and needs no key file. For a registry reachable
-from anywhere, `--auth write` is usually the shape you want — anonymous pull so
-the catalog and the UI are browsable, a key for push:
+`--auth-mode open` is the default and needs no key file. For a registry
+reachable from anywhere, `--auth-mode public-pull` is usually the shape you
+want — anonymous pull so the catalog and the UI are browsable, a key for push:
 
 ```sh
 umask 077
 cat > /etc/summ.env <<EOF
-SUMM_AUTH=write
+SUMM_AUTH_MODE=public-pull
 SUMM_WRITE_APIKEY=$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-40)
 EOF
 ```
 
 Keep this out of any git checkout, or add it to `.gitignore` if it must live in
-one. Under `--auth write` a `SUMM_READ_APIKEY` in the same file is a *startup
-error* rather than a warning — supplying a key that the mode does not use is
+one. Under `--auth-mode public-pull` a `SUMM_READ_APIKEY` in the same file is a
+*startup error* rather than a warning — supplying a key that the mode does not use is
 ambiguous between "ignore it" and "infer the mode from it", and both of those
 fail silently and leave a registry more open than its operator believes.
 

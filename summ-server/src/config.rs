@@ -73,9 +73,9 @@ pub struct ServerConfig {
     /// the client both that the fallback is unnecessary and that it is
     /// required.
     pub referrers_enabled: bool,
-    /// Which requests require an API key.
+    /// How open the registry is, and which keys enforce it.
     ///
-    /// [`AuthPolicy::None`] by default, which is what makes `summ serve` with
+    /// [`AuthPolicy::Open`] by default, which is what makes `summ serve` with
     /// no arguments a working registry in one command - see [`crate::auth`].
     pub auth: AuthPolicy,
 }
@@ -90,25 +90,30 @@ impl Default for ServerConfig {
             max_tag_params: 32,
             chunk_min_length: None,
             referrers_enabled: true,
-            auth: AuthPolicy::None,
+            auth: AuthPolicy::Open,
         }
     }
 }
 
-/// Which requests require an API key.
+/// How open the registry is.
 ///
-/// One axis, three points, from open to closed. Naming them for *what needs a
-/// key* rather than for how the key travels leaves room for a second
-/// mechanism to be a separate choice, instead of a fourth value here that
-/// silently also decides the scope.
+/// One axis, three points, from open to closed. The names describe the
+/// registry's posture rather than the mechanism enforcing it, which leaves
+/// room for a second mechanism to be a separate choice instead of a fourth
+/// value here that silently also decides the scope.
+///
+/// `public-pull` names an operation where its neighbours name a posture, and
+/// that asymmetry is the point: `open` and `private` are unambiguous alone,
+/// while a bare `public` is not - a public repository on a hosted registry is
+/// one anyone may *pull*, and summ's default is one anyone may also push.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AuthMode {
-    /// None of them. Anyone may read and write. The default.
-    None,
-    /// The ones that write: anonymous pull, keyed push.
-    Write,
-    /// All of them, with a read key and a write key.
-    All,
+    /// Anonymous pull and push. No key is required, or accepted. The default.
+    Open,
+    /// Anonymous pull, keyed push - the shape of a public registry.
+    PublicPull,
+    /// A key for everything, with a read key and a write key.
+    Private,
 }
 
 #[derive(Debug, Parser)]
@@ -219,34 +224,35 @@ pub struct ServeArgs {
     #[arg(long, env = "SUMM_NO_PULL_COUNTS")]
     pub no_pull_counts: bool,
 
-    /// Which requests require an API key: `none`, `write` or `all`.
+    /// How open the registry is: `open`, `public-pull` or `private`.
     ///
-    /// `none`, the default, is an open read-write registry - which is the
+    /// `open`, the default, is an anonymous read-write registry - which is the
     /// right default for the thing this is: a single binary someone runs to
     /// have a registry a minute later, usually on a laptop or inside a network
-    /// that is already the boundary. `write` requires the write key for push
-    /// and delete and serves every read anonymously, which is a public
-    /// registry - and means the catalog and the UI are readable by anyone who
-    /// can reach the port. `all` requires a key for everything the server
-    /// serves, the UI included. See [`crate::auth`].
-    #[arg(long, value_enum, default_value = "none", env = "SUMM_AUTH")]
-    pub auth: AuthMode,
+    /// that is already the boundary. `public-pull` requires the write key for
+    /// push and delete and serves every read anonymously - and so means the
+    /// catalog and the UI are readable by anyone who can reach the port.
+    /// `private` requires a key for everything the server serves, the UI
+    /// included. See [`crate::auth`].
+    #[arg(long, value_enum, default_value = "open", env = "SUMM_AUTH_MODE")]
+    pub auth_mode: AuthMode,
 
     /// API key admitting `GET` and `HEAD` - pull, list, browse.
     ///
-    /// Only meaningful with `--auth all`, where an absent key is generated and
-    /// printed once at startup; supplying it in any other mode is a startup
-    /// error rather than a key that quietly does nothing. A key given here is
-    /// never printed back.
+    /// Only meaningful with `--auth-mode private`, where an absent key is
+    /// generated and printed once at startup; supplying it in any other mode
+    /// is a startup error rather than a key that quietly does nothing. A key
+    /// given here is never printed back.
     #[arg(long, env = "SUMM_READ_APIKEY")]
     pub read_apikey: Option<String>,
 
     /// API key admitting everything, reads included - push, delete.
     ///
-    /// The key `--auth write` requires and the stronger of the two `--auth
-    /// all` requires; absent, it is generated and printed once at startup.
-    /// One key that can do everything is what a CI job wants, and making the
-    /// write key also read is what stops that job needing both.
+    /// The key `--auth-mode public-pull` requires and the stronger of the two
+    /// `--auth-mode private` requires; absent, it is generated and printed
+    /// once at startup. One key that can do everything is what a CI job wants,
+    /// and making the write key also read is what stops that job needing
+    /// both.
     #[arg(long, env = "SUMM_WRITE_APIKEY")]
     pub write_apikey: Option<String>,
 }
@@ -281,31 +287,31 @@ impl ServeArgs {
     /// downgrade authentication. Neither is a failure an operator can see, so
     /// this one is made loud and made at startup, before the listener binds.
     pub fn server_config(&self) -> Result<(ServerConfig, Option<Generated>), String> {
-        let (auth, generated) = match self.auth {
-            AuthMode::None => {
+        let (auth, generated) = match self.auth_mode {
+            AuthMode::Open => {
                 if self.read_apikey.is_some() || self.write_apikey.is_some() {
-                    return Err("an API key was supplied but --auth is `none`; pass \
-                         `--auth write` (SUMM_AUTH=write) for anonymous pull and keyed \
-                         push, or `--auth all` to require a key for reads as well"
+                    return Err("an API key was supplied but --auth-mode is `open`; pass \
+                         `--auth-mode public-pull` (SUMM_AUTH_MODE=public-pull) for \
+                         anonymous pull and keyed push, or `--auth-mode private` to \
+                         require a key for reads as well"
                         .to_owned());
                 }
-                (AuthPolicy::None, None)
+                (AuthPolicy::Open, None)
             }
-            AuthMode::Write => {
+            AuthMode::PublicPull => {
                 if self.read_apikey.is_some() {
-                    return Err("a read API key was supplied but --auth is `write`, which \
-                         serves every read anonymously; pass `--auth all` (SUMM_AUTH=all) \
-                         to require a key for reads too"
+                    return Err("a read API key was supplied but --auth-mode is \
+                         `public-pull`, which serves every read anonymously; pass \
+                         `--auth-mode private` (SUMM_AUTH_MODE=private) to require a key \
+                         for reads too"
                         .to_owned());
                 }
-                let (policy, generated) = AuthPolicy::for_writes(self.write_apikey.clone())?;
+                let (policy, generated) = AuthPolicy::for_public_pull(self.write_apikey.clone())?;
                 (policy, Some(generated))
             }
-            AuthMode::All => {
-                let (policy, generated) = AuthPolicy::for_everything(
-                    self.read_apikey.clone(),
-                    self.write_apikey.clone(),
-                )?;
+            AuthMode::Private => {
+                let (policy, generated) =
+                    AuthPolicy::for_private(self.read_apikey.clone(), self.write_apikey.clone())?;
                 (policy, Some(generated))
             }
         };
@@ -341,7 +347,7 @@ mod tests {
     #[test]
     fn the_default_is_an_open_registry() {
         assert!(!ServerConfig::default().auth.is_enabled());
-        let args = args(&["--auth", "none"]).expect("parses");
+        let args = args(&["--auth-mode", "open"]).expect("parses");
         let (config, generated) = args.server_config().expect("valid");
         assert!(!config.auth.is_enabled());
         assert!(generated.is_none(), "nothing to generate when auth is off");
@@ -351,22 +357,23 @@ mod tests {
     fn a_key_without_the_mode_is_a_startup_error() {
         // The failure this prevents is silent: an operator who set
         // SUMM_READ_APIKEY and believes the registry is closed.
-        let args = args(&["--auth", "none", "--read-apikey", "k"]).expect("parses");
+        let args = args(&["--auth-mode", "open", "--read-apikey", "k"]).expect("parses");
         let message = args.server_config().expect_err("must not start");
-        assert!(message.contains("--auth write"), "{message}");
-        assert!(message.contains("--auth all"), "{message}");
+        assert!(message.contains("--auth-mode public-pull"), "{message}");
+        assert!(message.contains("--auth-mode private"), "{message}");
     }
 
     #[test]
-    fn write_mode_takes_one_key_and_refuses_the_other() {
-        let supplied = args(&["--auth", "write", "--write-apikey", "mine"]).expect("parses");
+    fn public_pull_takes_one_key_and_refuses_the_other() {
+        let supplied =
+            args(&["--auth-mode", "public-pull", "--write-apikey", "mine"]).expect("parses");
         let (config, generated) = supplied.server_config().expect("valid");
         assert!(config.auth.is_enabled());
         let generated = generated.expect("reported");
         assert!(!generated.write, "the key was supplied");
         assert!(!generated.read, "this mode has no read key to invent");
 
-        let bare = args(&["--auth", "write"]).expect("parses");
+        let bare = args(&["--auth-mode", "public-pull"]).expect("parses");
         let (_, generated) = bare.server_config().expect("valid");
         assert!(
             generated.expect("reported").write,
@@ -374,14 +381,15 @@ mod tests {
         );
 
         // A read key here is an operator who believes reads are guarded.
-        let contradictory = args(&["--auth", "write", "--read-apikey", "k"]).expect("parses");
+        let contradictory =
+            args(&["--auth-mode", "public-pull", "--read-apikey", "k"]).expect("parses");
         let message = contradictory.server_config().expect_err("must not start");
-        assert!(message.contains("--auth all"), "{message}");
+        assert!(message.contains("--auth-mode private"), "{message}");
     }
 
     #[test]
-    fn apikey_mode_generates_what_was_not_supplied() {
-        let args = args(&["--auth", "all", "--write-apikey", "mine"]).expect("parses");
+    fn private_generates_what_was_not_supplied() {
+        let args = args(&["--auth-mode", "private", "--write-apikey", "mine"]).expect("parses");
         let (config, generated) = args.server_config().expect("valid");
         assert!(config.auth.is_enabled());
         let generated = generated.expect("reported");
@@ -396,14 +404,23 @@ mod tests {
     }
 
     fn args_both() -> ServeArgs {
-        args(&["--auth", "all", "--read-apikey", "r", "--write-apikey", "w"]).expect("parses")
+        args(&[
+            "--auth-mode",
+            "private",
+            "--read-apikey",
+            "r",
+            "--write-apikey",
+            "w",
+        ])
+        .expect("parses")
     }
 
     #[test]
     fn an_empty_key_is_rejected_rather_than_matching_an_empty_credential() {
-        let empty_read = args(&["--auth", "all", "--read-apikey", " "]).expect("parses");
+        let empty_read = args(&["--auth-mode", "private", "--read-apikey", " "]).expect("parses");
         assert!(empty_read.server_config().is_err());
-        let empty_write = args(&["--auth", "write", "--write-apikey", " "]).expect("parses");
+        let empty_write =
+            args(&["--auth-mode", "public-pull", "--write-apikey", " "]).expect("parses");
         assert!(empty_write.server_config().is_err());
     }
 
@@ -435,19 +452,27 @@ mod tests {
 
     #[test]
     fn the_modes_are_spelled_as_one_ladder() {
-        // The flag answers one question - which requests need a key - and the
+        // The flag answers one question - how open is this registry - and the
         // three values are its only answers, from open to closed.
         for (spelling, mode) in [
-            ("none", AuthMode::None),
-            ("write", AuthMode::Write),
-            ("all", AuthMode::All),
+            ("open", AuthMode::Open),
+            ("public-pull", AuthMode::PublicPull),
+            ("private", AuthMode::Private),
         ] {
-            let args = args(&["--auth", spelling]).expect("parses");
-            assert_eq!(args.auth, mode);
+            let args = args(&["--auth-mode", spelling]).expect("parses");
+            assert_eq!(args.auth_mode, mode);
         }
-        assert!(
-            args(&["--auth", "apikey"]).is_err(),
-            "the old vocabulary must fail loudly rather than mean something new"
-        );
+        // Every older spelling has to fail loudly rather than mean something
+        // new: `--auth all` once required a key for everything, and silently
+        // reading it as anything else would serve a more open registry than
+        // the command line asks for. clap does not infer long flags, so the
+        // retired flag is an error on its own.
+        assert!(args(&["--auth", "all"]).is_err(), "the retired flag");
+        for retired in ["none", "write", "all"] {
+            assert!(
+                args(&["--auth-mode", retired]).is_err(),
+                "the retired value `{retired}`"
+            );
+        }
     }
 }

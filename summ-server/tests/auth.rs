@@ -57,24 +57,24 @@ struct Harness {
 }
 
 impl Harness {
-    /// `--auth all`: a registry requiring the two keys above.
+    /// `--auth-mode private`: a registry requiring the two keys above.
     fn guarded() -> Self {
-        Self::with_auth(AuthPolicy::All {
+        Self::with_auth(AuthPolicy::Private {
             read: ApiKey::new(READ_KEY),
             write: ApiKey::new(WRITE_KEY),
         })
     }
 
-    /// `--auth write`: anonymous pull, the write key to push.
+    /// `--auth-mode public-pull`: anonymous pull, the write key to push.
     fn public() -> Self {
-        Self::with_auth(AuthPolicy::Write {
+        Self::with_auth(AuthPolicy::PublicPull {
             write: ApiKey::new(WRITE_KEY),
         })
     }
 
-    /// `--auth none`.
+    /// `--auth-mode open`.
     fn anonymous() -> Self {
-        Self::with_auth(AuthPolicy::None)
+        Self::with_auth(AuthPolicy::Open)
     }
 
     fn with_auth(auth: AuthPolicy) -> Self {
@@ -308,8 +308,8 @@ async fn write_mode_checks_a_credential_it_did_not_require() {
 }
 
 #[tokio::test]
-async fn write_mode_has_no_read_key_so_the_read_key_is_just_wrong() {
-    // A 401, not the 403 that `--auth all` gives a genuine-but-insufficient
+async fn public_pull_has_no_read_key_so_the_read_key_is_just_wrong() {
+    // A 401, not the 403 that `private` gives a genuine-but-insufficient
     // credential: under this mode the read key is not a credential at all.
     let h = Harness::public();
     let reply = h.push(Some(&format!("Bearer {READ_KEY}"))).await;
@@ -412,7 +412,7 @@ async fn the_read_key_is_denied_a_write_and_the_write_does_not_happen() {
 async fn deleting_a_repository_is_a_write_on_every_surface() {
     const URI: &str = "/api/v1/repositories/lib/nginx";
 
-    // `--auth all`: no credential is challenged, the read key is denied
+    // `--auth-mode private`: no credential is challenged, the read key is denied
     // without a challenge, the write key does it.
     let h = Harness::guarded();
     h.seed();
@@ -454,7 +454,7 @@ async fn deleting_a_repository_is_a_write_on_every_surface() {
         .await;
     assert_eq!(reply.status, StatusCode::ACCEPTED);
 
-    // `--auth write`: anonymous reads, but this is not a read.
+    // `--auth-mode public-pull`: anonymous reads, but this is not a read.
     let h = Harness::public();
     h.seed();
     let reply = h.send(Method::DELETE, URI, None, Body::empty()).await;
@@ -559,7 +559,7 @@ async fn a_401_body_names_no_key() {
     let rendered = format!(
         "{:?}",
         ServerConfig {
-            auth: AuthPolicy::All {
+            auth: AuthPolicy::Private {
                 read: ApiKey::new(READ_KEY),
                 write: ApiKey::new(WRITE_KEY),
             },

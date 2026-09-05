@@ -48,8 +48,9 @@ materialises an unbounded set.
 
 **One binary, no dependencies.** RocksDB is compiled in and statically linked.
 No database to run, no object store, no sidecar — `./summ serve` is the whole
-deployment. Optional API-key auth (`--auth none|write|all`) puts a read key and
-a write key in front of the registry, the discovery API and the UI at once.
+deployment. Optional API-key auth (`--auth-mode open|public-pull|private`) puts
+a read key and a write key in front of the registry, the discovery API and the
+UI at once.
 
 **Conformant.** The OCI `distribution-spec` conformance suite passes with zero
 failures at every profile, including the OCI 1.1 referrers API — 1032 checks
