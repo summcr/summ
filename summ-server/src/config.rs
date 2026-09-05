@@ -107,11 +107,11 @@ impl Default for ServerConfig {
 /// one anyone may *pull*, and summ's default is one anyone may also push.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum AuthMode {
-    /// Anonymous pull and push. No key is required, or accepted. The default.
+    /// Anonymous pull and push; no key is required, or accepted
     Open,
-    /// Anonymous pull, keyed push - the shape of a public registry.
+    /// Anonymous pull; the write key to push or delete
     PublicPull,
-    /// A key for everything, with a read key and a write key.
+    /// A key for every request, the UI included
     Private,
 }
 
@@ -134,51 +134,36 @@ pub struct ServeArgs {
     ///
     /// `127.0.0.1:3110` for this machine only, `0.0.0.0:3110` for every IPv4
     /// interface, `[::]:3110` for every interface on both families. Port `0`
-    /// binds an ephemeral port, which the startup banner then reports.
-    ///
-    /// One value rather than separate host and port flags, because a bind
-    /// address is one thing: it maps onto a `SocketAddr` with no reassembly
-    /// step, it is how an address is quoted between people, and it is the only
-    /// shape that stays expressible if this ever has to accept more than one.
-    ///
-    /// A host, not a hostname: a name can resolve to several addresses and a
-    /// listener binds exactly one, so resolving here would only hide which one
-    /// we picked.
+    /// binds an ephemeral port, which the startup banner then reports. Takes
+    /// an IP address, not a hostname.
     #[arg(long, default_value = "127.0.0.1:3110", env = "SUMM_LISTEN")]
     pub listen: SocketAddr,
 
     /// Directory for blobs and metadata.
     ///
-    /// `meta/` holds the metadata engine and `blobs/` the content-addressed
-    /// store. They share a directory because they must share a filesystem: an
-    /// upload is committed by renaming its staging file into the blob tree, and
-    /// a rename across devices is not a rename.
+    /// Created if absent. `meta/` holds the metadata store, `blobs/` the
+    /// content-addressed blob tree and `uploads/` the ones still arriving; all
+    /// three must be on one filesystem.
     #[arg(long, default_value = "./data", env = "SUMM_DATA_DIR")]
     pub data_dir: PathBuf,
 
     /// Accept a manifest whose layers or child manifests are not present yet.
     ///
-    /// Validation defaults on: a registry that accepts a manifest it cannot
-    /// serve has traded a push-time 400 for a pull-time 404, and the pull-time
-    /// failure is the one nobody can diagnose. It is optional per spec and
-    /// R1 recommends against it for exactly one caller - the conformance
-    /// suite's `OCI_DATA_SPARSE` sets push a manifest and its layers
-    /// concurrently, which is the shape validation rejects. This flag is how
-    /// the harness turns it off without the server arguing with it.
+    /// Off by default, so a manifest naming an absent blob is rejected with
+    /// `400 MANIFEST_BLOB_UNKNOWN`. Set it to push a manifest and its blobs
+    /// concurrently.
     #[arg(long, env = "SUMM_ALLOW_MISSING_REFERENCES")]
     pub allow_missing_references: bool,
 
-    /// Maximum manifest size in bytes.
+    /// Maximum manifest size in bytes. A larger one is rejected with `413`.
     #[arg(long, default_value_t = 8 * 1024 * 1024, env = "SUMM_MAX_MANIFEST_BYTES")]
     pub max_manifest_bytes: usize,
 
     /// Maximum bytes in one upload request body; `0` removes the limit.
     ///
-    /// No client chunks a layer, so this is effectively the largest layer the
-    /// registry will accept: below a layer's size, a push fails with `413` and
-    /// `SIZE_INVALID` however many times it is retried. The body streams
-    /// straight to the staging file, so raising it costs disk rather than
-    /// memory.
+    /// Effectively the largest layer the registry accepts, since no client
+    /// chunks one: a bigger body is rejected with `413 SIZE_INVALID`. The body
+    /// streams to disk, so raising it costs disk rather than memory.
     #[arg(
         long,
         default_value_t = DEFAULT_MAX_UPLOAD_BYTES,
@@ -196,54 +181,45 @@ pub struct ServeArgs {
 
     /// Answer `404` on `/v2/<name>/referrers/<digest>` instead of serving it.
     ///
-    /// The endpoint is on by default. This turns it off, which also drops
-    /// `OCI-Subject` from manifest `PUT` responses - a client must not be told
-    /// its subject was processed by a registry that will not list it.
+    /// The endpoint is on by default. Turning it off also drops `OCI-Subject`
+    /// from manifest `PUT` responses.
     #[arg(long, env = "SUMM_NO_REFERRERS")]
     pub no_referrers: bool,
 
     /// Stop counting pulls.
     ///
-    /// On by default, like the referrers endpoint and for the same reason: the
-    /// feature is cheap and the switch is for the operator who does not want
-    /// the writes at all. A pull adds to a map in memory; a background task
-    /// folds the map into the `A` range every few seconds, which is one point
-    /// lookup and one `Put` per bucket touched. This turns off both, and the
-    /// `/api/v1/pull-counts/` endpoint keeps answering with whatever was
-    /// recorded before - counts outlive what they describe, so an empty window
-    /// is a real answer rather than a `404`.
+    /// Counting is on by default. This stops the recording and its background
+    /// writes, not the API: `/api/v1/pull-counts/` keeps answering with
+    /// whatever was recorded before.
     #[arg(long, env = "SUMM_NO_PULL_COUNTS")]
     pub no_pull_counts: bool,
 
     /// How open the registry is: `open`, `public-pull` or `private`.
     ///
-    /// `open`, the default, is an anonymous read-write registry - which is the
-    /// right default for the thing this is: a single binary someone runs to
-    /// have a registry a minute later, usually on a laptop or inside a network
-    /// that is already the boundary. `public-pull` requires the write key for
-    /// push and delete and serves every read anonymously - and so means the
-    /// catalog and the UI are readable by anyone who can reach the port.
-    /// `private` requires a key for everything the server serves, the UI
-    /// included. See [`crate::auth`].
+    /// `open`, the default, requires no credential to pull or to push.
+    /// `public-pull` serves every read anonymously - the catalog and the UI
+    /// included - and requires the write key to push or delete. `private`
+    /// requires a key for everything the server serves, the UI included.
+    ///
+    /// A key is sent as the password of an HTTP Basic credential, so
+    /// `docker login -u anyone -p <key>` works and the username is ignored.
     #[arg(long, value_enum, default_value = "open", env = "SUMM_AUTH_MODE")]
     pub auth_mode: AuthMode,
 
     /// API key admitting `GET` and `HEAD` - pull, list, browse.
     ///
-    /// Only meaningful with `--auth-mode private`, where an absent key is
-    /// generated and printed once at startup; supplying it in any other mode
-    /// is a startup error rather than a key that quietly does nothing. A key
-    /// given here is never printed back.
+    /// Valid only with `--auth-mode private`, where an absent key is generated
+    /// and printed once at startup; supplying it in any other mode is a
+    /// startup error. A key given here is never printed back.
     #[arg(long, env = "SUMM_READ_APIKEY")]
     pub read_apikey: Option<String>,
 
     /// API key admitting everything, reads included - push, delete.
     ///
-    /// The key `--auth-mode public-pull` requires and the stronger of the two
-    /// `--auth-mode private` requires; absent, it is generated and printed
-    /// once at startup. One key that can do everything is what a CI job wants,
-    /// and making the write key also read is what stops that job needing
-    /// both.
+    /// Required by `--auth-mode public-pull`, and the stronger of the two keys
+    /// under `--auth-mode private`; absent, it is generated and printed once
+    /// at startup. It reads as well as writes, so a client that both pushes
+    /// and pulls needs this key alone.
     #[arg(long, env = "SUMM_WRITE_APIKEY")]
     pub write_apikey: Option<String>,
 }
