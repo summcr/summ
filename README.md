@@ -8,9 +8,9 @@ fully supports the OCI Distribution Spec and adds the practical things a
 registry should have had all along — image pull statistics, tag history, a
 built-in web UI — so it is useful the moment it starts.
 
-summ is written in Rust over a metadata schema designed for discovery rather
-than transfer, which is what makes it fast where it counts: on the four serial
-metadata lookups a real `docker pull` waits on.
+summ is written in Rust, with a bespoke data structure for extremely efficient
+storage and retrieval of registry metadata, which is what makes it fast where
+it counts: on the four serial metadata lookups a real `docker pull` waits on.
 
 ## Features
 
