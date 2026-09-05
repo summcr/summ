@@ -505,9 +505,10 @@ mod suite {
 
     // --- analytics ------------------------------------------------------
 
-    /// The whole contribution wall in one bounded scan, exactly as PLAN.md
-    /// specifies it: 53 weeks is 371 day buckets, arriving in chronological
-    /// order with no read-time aggregation and nothing to paginate.
+    /// The whole contribution wall in one bounded scan, which is what the `A`
+    /// key layout exists for: 53 weeks is 371 day buckets, arriving in
+    /// chronological order with no read-time aggregation and nothing to
+    /// paginate.
     pub fn the_pull_count_wall_is_one_bounded_chronological_scan(db: &dyn MetaEngine) {
         let (repo, manifest) = (3u32, digest(42));
         let today: u16 = 20_000;

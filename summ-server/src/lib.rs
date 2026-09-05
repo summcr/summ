@@ -10,8 +10,8 @@
 //! `summ-storage` holding the bytes - and [`memory`] is a second one, kept
 //! because a trait with one implementation is not a seam.
 //!
-//! Two things the middleware stack deliberately does *not* have, both from
-//! `research/R5`:
+//! Two things the middleware stack deliberately does *not* have, both
+//! dictated by what real clients do:
 //!
 //! - **No compression layer.** A blob's digest is over its plaintext bytes;
 //!   any transform of the body breaks it. There is no path on which a

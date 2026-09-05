@@ -283,7 +283,7 @@ pub fn api_route(path: &str) -> Result<ApiEndpoint, RouteError> {
         // A reference is optional here, unlike `tag-history`: the repository is
         // itself a counter scope, and the only one carrying blob traffic. The
         // three scopes are separate series maintained on write, so this is not
-        // a rollup of the per-manifest ones - see `PLAN.md`.
+        // a rollup of the per-manifest ones.
         "pull-counts" => match remainder.rsplit_once('@') {
             Some((name, reference)) => Ok(ApiEndpoint::PullCounts {
                 name: name_of(name)?,

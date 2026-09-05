@@ -29,7 +29,7 @@
 //! Neither range is bounded by current state - they are the only ranges that
 //! grow with time rather than with content - and nothing trims them yet. A
 //! retention window is a `DeletePrefix` over a bounded suffix of each range and
-//! belongs to the purge sweep; see `PLAN.md`.
+//! belongs to the purge sweep.
 
 use summ_core::{keys, Digest, TagEvent, Timestamp};
 

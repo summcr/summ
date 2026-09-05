@@ -19,8 +19,6 @@ target/
 *.md
 LICENSE
 NOTICE
-design/
-research/
 
 Dockerfile
 .dockerignore

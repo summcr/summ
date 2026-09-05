@@ -49,8 +49,8 @@ pub enum ErrorCode {
     /// Present for completeness of the taxonomy and **never emitted by summ**.
     ///
     /// containerd's `retryRequest` treats `429` as retryable and retries
-    /// immediately, five times, without honouring `Retry-After`
-    /// (`research/R5` §A9). A `429` therefore multiplies the load it was meant
+    /// immediately, five times, without honouring `Retry-After`.
+    /// A `429` therefore multiplies the load it was meant
     /// to shed. Escaping provider rate limits is half the reason this project
     /// exists; if summ ever needs to shed load it must do so at the connection
     /// or accept level, not with a status code.

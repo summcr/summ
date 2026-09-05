@@ -1,8 +1,8 @@
 //! end-12: `GET /v2/<name>/referrers/<digest>`.
 //!
-//! Disabled by default - PLAN.md defers the referrers API to Phase 6 - but
-//! implemented, because the switch is [`ServerConfig::referrers_enabled`] and
-//! the alternative would be discovering the endpoint's rules late.
+//! On by default; [`ServerConfig::referrers_enabled`] turns it off. The `F`
+//! edges are written on every push regardless, so the switch serves the
+//! endpoint or hides it and never decides what is indexed.
 //!
 //! The rule that catches implementations out: **once the API is on it MUST NOT
 //! return `404`.** An unknown subject digest, and even an unknown repository,

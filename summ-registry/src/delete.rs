@@ -1,4 +1,4 @@
-//! Deletion, per `research/R1` §11.
+//! Deletion: manifests, blobs, and whole repositories.
 //!
 //! The two spec deletes must be *visible* the instant they return: the
 //! conformance suite issues a `HEAD` immediately after each `202 Accepted` and
