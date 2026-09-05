@@ -134,13 +134,10 @@ fn print_auth(auth: &AuthPolicy, generated: Option<Generated>, bound: SocketAddr
                     println!("                delete; the listener is on loopback, so nothing");
                     println!("                else can reach it");
                 }
-                // The variable phrase ends the first line, so a long address
-                // cannot push the fixed text past the width of the banner.
                 Reach::Network(who) => {
-                    println!("  !! OPEN REGISTRY - {who}");
-                    println!("  !! may pull, push and delete. No credential is asked for, and");
-                    println!("  !! none would be accepted.");
-                    println!("  !! --auth-mode public-pull gates push; private gates pulls too.");
+                    for line in open_warning(&who) {
+                        println!("{line}");
+                    }
                 }
             }
         }
@@ -167,6 +164,66 @@ fn print_auth(auth: &AuthPolicy, generated: Option<Generated>, bound: SocketAddr
     if generated.read || generated.write {
         println!("  !! a generated key is printed once and is not stored anywhere.");
     }
+}
+
+/// The `open` warning, boxed in `*`, as lines ready to print.
+///
+/// Returned rather than printed so the shape can be tested: a box whose rows
+/// disagree about their width is not a box, and it is the one thing here that
+/// no reader of the source can check by eye, because the address inside it
+/// varies with the bind.
+///
+/// The text is wrapped to a *fixed* inner width instead of the box being sized
+/// to its longest line, for the same reason. An IPv6 bind is a good deal wider
+/// than an IPv4 one, and a warning that changes shape between launches reads as
+/// output that happened to be printed rather than as a notice someone wrote.
+fn open_warning(who: &str) -> Vec<String> {
+    const WIDTH: usize = 70;
+
+    let body = [
+        "OPEN REGISTRY".to_owned(),
+        format!(
+            "{who} may pull, push and delete. No credential is asked for, \
+             and none would be accepted."
+        ),
+        String::new(),
+        "--auth-mode public-pull gates push; private gates pulls too.".to_owned(),
+    ];
+
+    let rule = "*".repeat(WIDTH + 6);
+    let mut lines = vec![format!("  {rule}")];
+    for paragraph in &body {
+        for line in wrap(paragraph, WIDTH) {
+            lines.push(format!("  *  {line:<WIDTH$}  *"));
+        }
+    }
+    lines.push(format!("  {rule}"));
+    lines
+}
+
+/// Break a paragraph on spaces into lines of at most `width` columns.
+///
+/// Bytes are columns here: everything that reaches this is fixed ASCII or a
+/// socket address. A single word longer than `width` gets a line of its own and
+/// overhangs it - which cannot happen to the text above, where the longest word
+/// is an IPv6 address and a half of `width` - but overhanging is the right
+/// failure anyway: a ragged edge on one line beats a truncated warning.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.len() + 1 + word.len() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    // An empty paragraph is a blank line in the box, not nothing: it is the
+    // gap that separates the warning from what to do about it.
+    lines.push(line);
+    lines
 }
 
 /// Who can reach the listener, for the `open` warning.
@@ -282,6 +339,45 @@ mod tests {
         assert!(
             matches!(reach(addr("[::]:3110")), Reach::Network(_)),
             "the v6 unspecified address is every interface too"
+        );
+    }
+
+    /// The box is drawn, not measured, so nothing but a test notices when a
+    /// line stops fitting it. The widest bind there is goes in, because that
+    /// is the launch where a line would overflow.
+    #[test]
+    fn the_open_warning_is_a_box_of_one_width() {
+        for who in [
+            "anyone who can reach this machine on port 5",
+            "anyone who can reach this machine on port 65535",
+            "anyone who can reach [2001:db8:85a3:8d3:1319:8a2e:370:7348]:65535",
+        ] {
+            let lines = open_warning(who);
+            let width = lines[0].len();
+            for line in &lines {
+                assert_eq!(line.len(), width, "{line:?} in\n{}", lines.join("\n"));
+            }
+            assert!(lines[0].trim().chars().all(|c| c == '*'));
+            assert!(lines.last().expect("a bottom rule").trim() == lines[0].trim());
+            let text = lines.join("\n");
+            assert!(text.contains("OPEN REGISTRY"), "{text}");
+            assert!(
+                text.contains("--auth-mode public-pull"),
+                "the way out has to be in the box: {text}"
+            );
+        }
+    }
+
+    /// The wrap is what keeps the box square, so its edge cases are the box's.
+    #[test]
+    fn wrapping_breaks_on_spaces_and_keeps_an_empty_paragraph() {
+        assert_eq!(wrap("", 10), vec![""], "a blank line, not no line");
+        assert_eq!(wrap("a b c", 10), vec!["a b c"]);
+        assert_eq!(wrap("aaaa bbbb cccc", 9), vec!["aaaa bbbb", "cccc"]);
+        assert_eq!(
+            wrap("supercalifragilistic x", 8),
+            vec!["supercalifragilistic", "x"],
+            "an unbreakable word overhangs rather than being cut"
         );
     }
 }
