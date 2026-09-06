@@ -96,35 +96,77 @@ still pulls, when a tag last moved and what it pointed at before, whether a
 manifest has ever been called anything else — questions most registries cannot
 answer at all. summ answers them on the page you were already looking at.
 
-## Download
+## Quick start
 
-Prebuilt binaries for four targets are published on the
-[releases page](https://github.com/summcr/summ/releases). Asset names carry no
-version, and `releases/latest/download/` resolves to the newest release, so an
-install line never needs updating.
+Run the binary, or run the container. Either way you get a complete registry on
+`http://127.0.0.1:3110` — nothing else to install, configure or stand up
+alongside it.
 
-| Platform | Asset |
-|---|---|
-| Linux x86_64 | `summ-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux arm64 | `summ-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Apple silicon | `summ-aarch64-apple-darwin.tar.gz` |
-| macOS Intel | `summ-x86_64-apple-darwin.tar.gz` |
+### Prebuilt binary
+
+Download the one for your platform:
 
 ```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz \
-  | tar -xz summ
+# Linux x86_64
+curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz | tar -xz summ
+
+# Linux arm64
+curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-unknown-linux-gnu.tar.gz | tar -xz summ
+
+# macOS Apple silicon
+curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-apple-darwin.tar.gz | tar -xz summ
+
+# macOS Intel
+curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-apple-darwin.tar.gz | tar -xz summ
+```
+
+Then start it:
+
+```sh
 ./summ serve
 ```
 
-On Linux, RocksDB and its C++ runtime are linked in statically, so the only
-shared libraries left are the ones every glibc system already has — `libc`,
-`libm` and `libgcc_s`. The build floor is glibc 2.34: Ubuntu 22.04, Debian 12,
-RHEL 9 and newer. The macOS builds link nothing beyond the OS's own libraries
-and run on macOS 11 and up.
+Data goes in `./data` next to the binary. `--data-dir` puts it elsewhere.
 
-Every asset has a `.sha256` beside it. `dev` is a rolling prerelease built from
-`main` on demand — swap `latest/download` for `download/dev` to fetch it. Being
-a prerelease, it never becomes `latest`.
+### Docker
+
+```sh
+docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ
+```
+
+The image is multi-architecture, so that line is the same on x86_64 and arm64.
+
+summ writes everything to `/var/lib/summ`, which `-v summ-data:/var/lib/summ`
+keeps on a named volume so it survives the container. **Name the
+volume** — drop the `-v` and you still get one, but an anonymous volume that
+`docker run --rm` deletes along with the container. A bind mount works too,
+after `chown 10001:10001` on the host directory.
+
+### Check it works
+
+```sh
+curl http://127.0.0.1:3110/v2/     # {}
+```
+
+Then open <http://127.0.0.1:3110> for the web UI, and push an image at it:
+
+```sh
+docker tag alpine 127.0.0.1:3110/demo/alpine
+docker push 127.0.0.1:3110/demo/alpine
+```
+
+Docker treats the whole `127.0.0.0/8` range as insecure by default, so there is
+nothing to configure. Other clients make their own rules — `oras` and `crane`
+have to be told an endpoint is plain HTTP.
+
+One caveat on macOS and Windows: that push reaches the container above, but not
+a *binary* on your host — the Docker daemon runs in a VM there, where
+`127.0.0.1` is its own loopback rather than yours. Push to a host binary with
+`oras` or `crane` instead.
+
+More in [docs/setup.md](docs/setup.md), including platform requirements and
+building from source, and [docs/data-dir.md](docs/data-dir.md) for what summ
+stores and how to back it up.
 
 ## Deployment
 

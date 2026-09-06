@@ -19,7 +19,13 @@ curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-u
 | macOS Intel | `summ-x86_64-apple-darwin.tar.gz` |
 
 Linux builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
-RocksDB is statically linked, so there is nothing else to install.
+RocksDB and its C++ runtime are linked in statically, so the only shared
+libraries left are ones every glibc system already has. The macOS builds link
+nothing beyond the OS's own libraries and run on macOS 11 and up.
+
+Every asset has a `.sha256` beside it. `dev` is a rolling prerelease built from
+`main` on demand — swap `latest/download` for `download/dev` to fetch it. Being
+a prerelease it never becomes `latest`.
 
 To build from source you need a Rust toolchain, a C++ compiler, and `clang`
 plus `lld` on Linux. RocksDB compiles from source, so the first build takes a
@@ -52,9 +58,22 @@ docker tag alpine:3.20 127.0.0.1:3110/demo/alpine:3.20
 docker push 127.0.0.1:3110/demo/alpine:3.20
 ```
 
-`127.0.0.1` is on Docker's default insecure-registry list, so no daemon
-configuration is needed for a local test. Any other address needs TLS in front
-of summ, or an `insecure-registries` entry in the daemon config.
+Docker treats the whole `127.0.0.0/8` range as insecure by default — `::1/128`
+too, on current daemons — so no daemon configuration is needed for a local
+test. The behaviour has held since Docker 1.3.2, though the `dockerd` reference
+discourages relying on it. Any other address needs TLS in front of summ, or an
+`insecure-registries` entry in the daemon config.
+
+That is a Docker rule and not a general one. `oras`, `crane` and `skopeo` each
+need to be told an endpoint is plain HTTP — `--plain-http` or the equivalent —
+loopback included.
+
+On macOS and Windows this works only when summ is itself a container with a
+published port. The Docker daemon runs in a VM there, so the `127.0.0.1` it
+dials is the VM's loopback and not the host's, and a push to a summ binary
+running on your machine fails with `connection refused`. Use a client that runs
+on the host — `oras`, `crane` or `skopeo` — or run summ in a container. On
+Linux the daemon shares your network namespace and the question does not arise.
 
 ## The flags you will set
 
@@ -93,17 +112,30 @@ Two proxy rules matter more than the rest:
 
 ## Run in a container
 
-The repository `Dockerfile` builds a runtime image that listens on `0.0.0.0:3110`
-and stores data at `/var/lib/summ` as uid 10001.
+Multi-architecture images for `linux/amd64` and `linux/arm64` are published on
+Docker Hub as `summcr/summ`. They listen on `0.0.0.0:3110` and store data at
+`/var/lib/summ` as uid 10001.
 
 ```sh
-docker build -t summ .
-docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summ
+docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ:0.1.0-rc.1
 ```
+
+`latest` points at the newest release, release candidates included. Pin a
+version for anything that should stay put.
+
+Mount `/var/lib/summ` as one volume rather than one per subdirectory — `meta/`,
+`blobs/` and `uploads/` must share a filesystem, for the reason in
+[Data directory](data-dir.md). The image declares `VOLUME`, so a run with no
+`-v` gets an anonymous volume, and `docker run --rm` deletes that with the
+container.
 
 Pass `serve` flags after the image name, or set the `SUMM_*` variables with
 `-e`. The image has a healthcheck on `GET /v2/`, which is also the right
 liveness probe for any orchestrator.
+
+To build an image from an unreleased commit instead, the repository
+`Dockerfile` compiles from source; `Dockerfile.release` is what packages a
+published release.
 
 ## Check it is up
 
