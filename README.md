@@ -12,6 +12,10 @@ summ is written in Rust, with a bespoke data structure for extremely efficient
 storage and retrieval of registry metadata, which is what makes it fast where
 it counts: on the four serial metadata lookups a real `docker pull` waits on.
 
+## Live demo
+
+https://demo.registry.summcr.com/r/summcr/summ
+
 ## Features
 
 **Pull counts, per day and per hour.** Every repository, tag and manifest gets a
