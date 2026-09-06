@@ -30,6 +30,8 @@
 //! [`BlobStream`]: summ_storage::BlobStream
 //! [`seam::Registry`]: crate::seam::Registry
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -215,9 +217,54 @@ fn manifest_info(
     })
 }
 
+/// Serialises the *plan* and the *apply* of one repository's tag mutations.
+///
+/// `stage_set_tag` reads the tag's current digest so it can retract the `G`
+/// edge that a repoint displaces, and that read is in the plan while the
+/// retraction is in the batch. Two pushes to one tag that plan concurrently
+/// therefore see the same predecessor and both retract only it: neither drops
+/// the other's edge, and `G` is left naming a manifest the tag no longer points
+/// at. The tag lookup itself is unharmed - `T` is one key and the last write
+/// wins cleanly - so the damage is invisible from the tag's side and shows up
+/// twice over: the discovery API reports one tag on several manifests, and
+/// purge, which asks `G` and nothing else whether a manifest is tagged, will
+/// never reclaim any of them.
+///
+/// A fixed array of mutexes rather than a map keyed by name, for the reason
+/// everything else here is a fixed size: a map would grow with the number of
+/// repositories and want an eviction policy, and getting that wrong is a lock
+/// that stops locking. Two repositories colliding on a shard serialise their
+/// tag writes against each other, which costs a little throughput and no
+/// correctness. [`SHARDS`](RepoLocks::SHARDS) is sized so that collisions are
+/// rare among the repositories one process is actively being pushed to, not
+/// among the ten million it stores.
+struct RepoLocks {
+    shards: Box<[tokio::sync::Mutex<()>]>,
+}
+
+impl RepoLocks {
+    const SHARDS: usize = 256;
+
+    fn new() -> Self {
+        RepoLocks {
+            shards: (0..Self::SHARDS)
+                .map(|_| tokio::sync::Mutex::new(()))
+                .collect(),
+        }
+    }
+
+    fn of(&self, repo: &str) -> &tokio::sync::Mutex<()> {
+        let mut hasher = DefaultHasher::new();
+        repo.hash(&mut hasher);
+        &self.shards[(hasher.finish() as usize) % Self::SHARDS]
+    }
+}
+
 pub struct Backend {
     ops: Arc<Ops>,
     blobs: BlobStore,
+    /// Held across the plan and the apply of a tag mutation. See [`RepoLocks`].
+    tags: RepoLocks,
     /// Woken by a repository delete so the sweeper starts on it now rather
     /// than at the next tick. The tick is the fallback that picks up work left
     /// by a crash; this is what makes an ordinary delete feel immediate.
@@ -269,6 +316,7 @@ impl Backend {
         Ok(Backend {
             ops: Arc::new(Ops::with_options(engine, options)),
             blobs,
+            tags: RepoLocks::new(),
             sweep: Arc::new(Notify::new()),
         })
     }
@@ -552,11 +600,22 @@ impl Registry for Backend {
         let echo = tags.clone();
         let document = body.clone();
 
-        // Planned, not applied. Planning is where the body is parsed, the
-        // reference checked against it and the digest computed, so it is also
-        // the only place the digest is known before anything has been written.
-        let planned = self
-            .write(move |ops| {
+        // Planned once, unlocked and unapplied. Planning is where the body is
+        // parsed, its reference checked against it and the digest computed, so
+        // it is the only place the digest is known before anything has been
+        // written - and it is also where a malformed manifest, a mismatched
+        // digest or a missing layer is rejected. Both of those want to happen
+        // before the archive copy: the digest names the file, and a push that
+        // is going to be refused should not leave a blob on the disk first.
+        let plan = {
+            let (name, reference, content_type, body, tags) = (
+                name.clone(),
+                reference.clone(),
+                content_type.clone(),
+                body.clone(),
+                tags.clone(),
+            );
+            self.write(move |ops| {
                 let req = summ_registry::ManifestPut {
                     repo: &name,
                     reference: &reference,
@@ -569,21 +628,51 @@ impl Registry for Backend {
                 // that resolves by digest under a tag that does not exist.
                 ops.plan_manifest_put_tagged(&req, &tags)
             })
-            .await?;
+            .await?
+        };
 
         // Then the archive copy, fsynced - see `archive_manifest`. It goes here
         // and not after the batch for the same reason a layer does: the batch
         // is the commit point, and everything the store will need must already
         // be on disk when it lands.
-        self.archive_manifest(&planned.outcome.digest, document)
+        self.archive_manifest(&plan.outcome.digest, document)
             .await?;
 
-        let outcome = self
-            .write(move |ops| {
+        // And now the batch that is actually applied is planned again, under
+        // the repository's tag lock and in the same blocking task as the apply.
+        //
+        // The plan above cannot be the one that commits. It reads the tag's
+        // current digest to decide which `G` edge to retract and it reads the
+        // repository's blobs to validate the manifest's references, and between
+        // it and the apply sits `archive_manifest` - a create, a write and an
+        // fsync, which is milliseconds rather than the microseconds a lookup
+        // costs. Measured on macOS the gap is tens of milliseconds wide, which
+        // is not a window that has to be raced for: an ordinary CI job pushing
+        // one tag from two runners falls into it. Replanning inside the lock
+        // makes both of those reads adjacent to the batch they inform, so a
+        // repoint retracts the edge that is really there and a reference is
+        // checked against the blobs that are really there.
+        //
+        // The lock is taken *after* the archive write and not around it,
+        // because a lock held across an fsync is how one slow disk serialises a
+        // repository's pushes at the speed of its worst one. What is inside it
+        // is a parse, a handful of point lookups and one `apply`.
+        let outcome = {
+            let _guard = self.tags.of(&name).lock().await;
+            self.write(move |ops| {
+                let req = summ_registry::ManifestPut {
+                    repo: &name,
+                    reference: &reference,
+                    body: &body,
+                    content_type: Some(&content_type),
+                    now,
+                };
+                let planned = ops.plan_manifest_put_tagged(&req, &tags)?;
                 ops.engine().apply(&planned.batch)?;
                 Ok(planned.outcome)
             })
-            .await?;
+            .await?
+        };
 
         Ok(ManifestPut {
             digest: outcome.digest,
@@ -596,6 +685,10 @@ impl Registry for Backend {
         let now = self.now();
         let name = name.to_string();
         let reference = as_ops_reference(reference);
+        // The same lock the push takes, for the same reason: both of these read
+        // what a tag points at and then write a batch retracting it, and a
+        // delete racing a repoint strands the edge neither of them saw.
+        let _guard = self.tags.of(&name).lock().await;
         self.write(move |ops| {
             match &reference {
                 // A tag delete leaves the manifest reachable by digest, so it
