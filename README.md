@@ -32,6 +32,11 @@ step, no framework, no CDN, so it works air-gapped. Browse repositories with
 per-repo tag and manifest counts, search names by substring, drill into a manifest,
 and see the pull-count grids and tag timelines beside the thing they describe.
 
+![A repository page in summ's web UI](docs/images/web-ui.png)
+
+*A repository page: tag, manifest, blob and size counts, the thirty-day and
+last-24-hours pull grids, and the tags with the platforms each one covers.*
+
 **Metadata lookups are the product.** Four of the five serial steps in a cold
 `containerd` pull are metadata lookups, and their latencies add — so summ is
 built around a purpose-designed key schema over RocksDB rather than around the
