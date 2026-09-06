@@ -57,6 +57,45 @@ UI at once.
 failures at every profile, including the OCI 1.1 referrers API — 1032 checks
 passing at the suite's `dev` profile, with nothing skipped.
 
+## Use cases
+
+**Run your own registry, instead of pulling against someone else's limit.**
+Docker Hub rate-limits anonymous and free-tier pulls; ECR and ACR throttle by
+tier and bill the bandwidth on the way out. Meanwhile a scaling cluster and a CI
+matrix fetch the same few base images hundreds of times a day. Copy them into
+summ once — `skopeo copy`, `crane copy`, or a job that runs on merge — and the
+pulls land on a registry you run, at your network's speed, with no quota to
+exhaust.
+
+**A throwaway registry for integration tests and CI.** One binary and a
+directory — `summ serve --data-dir "$(mktemp -d)"` — no daemon, no compose file,
+no service container to wait on. Bind it to loopback and Docker pushes to it
+without an `insecure-registries` entry; delete the directory when the run ends.
+Tests assert on what was pushed through the discovery API rather than by
+grepping output.
+
+**A personal registry that is not a weekend of YAML.** A homelab, a NAS, a
+laptop, a few side projects that need somewhere to put images. `./summ serve` is
+the whole deployment — no database, no object store, and the web UI is already
+on the same port. Add `--auth-mode public-pull` when it leaves the laptop.
+
+**A home for OCI artifacts that are not images.** Helm charts, WASM modules,
+SBOMs, signatures, attestations, model weights — push them with `oras push` or
+`helm push` like any other registry. The referrers API is implemented and passes
+conformance, `artifactType` filtering included, so whatever is attached to an
+image is discoverable by the tools that go looking.
+
+**An air-gapped, edge or embedded registry.** One statically linked file, no
+runtime dependencies, and a UI compiled into the binary that loads nothing from
+a CDN — a machine with no route to the internet gets exactly the same registry
+as one on the public network. Small enough to ship inside a product, an
+appliance or a cluster bootstrap.
+
+**Finding out what your registry is actually for.** Which repositories anyone
+still pulls, when a tag last moved and what it pointed at before, whether a
+manifest has ever been called anything else — questions most registries cannot
+answer at all. summ answers them on the page you were already looking at.
+
 ## Download
 
 Prebuilt binaries for four targets are published on the
