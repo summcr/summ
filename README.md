@@ -106,17 +106,27 @@ alongside it.
 
 Download the one for your platform:
 
+**Linux x86_64**
+
 ```sh
-# Linux x86_64
 curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz | tar -xz summ
+```
 
-# Linux arm64
+**Linux arm64**
+
+```sh
 curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-unknown-linux-gnu.tar.gz | tar -xz summ
+```
 
-# macOS Apple silicon
+**macOS Apple silicon**
+
+```sh
 curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-apple-darwin.tar.gz | tar -xz summ
+```
 
-# macOS Intel
+**macOS Intel**
+
+```sh
 curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-apple-darwin.tar.gz | tar -xz summ
 ```
 
