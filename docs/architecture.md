@@ -38,21 +38,34 @@ cheap. Block compression pays off unusually well because most of the keyspace
 is valueless edge keys sharing long digest prefixes.
 
 **The key schema is the product.** Every key starts with a one-byte type
-prefix. Repository names are interned to a 4-byte id so a long name is not
-repeated in every key. Digests are stored raw, not hex. Some of the types:
+prefix: uppercase for registry data, lowercase for internal bookkeeping.
+Repository names are interned to a 4-byte id so a long name is not repeated in
+every key. Digests are stored raw, not hex. Values are postcard-encoded, and an
+edge key that only needs to exist carries no value at all. Every type:
 
-| Prefix | Key | Answers |
-|---|---|---|
-| `M` | repo, digest | manifest record |
-| `B` | repo, digest | manifest body, zstd-compressed |
-| `T` | repo, tag | which digest a tag points at, sorted by tag name |
-| `G` | repo, digest, tag | which tags point at a manifest |
-| `L` | digest | blob exists, and its size |
-| `R` | digest, repo, manifest | which manifests reference a blob |
-| `P` | repo, digest | blob is mounted in this repo |
-| `F` | repo, subject, referrer | OCI 1.1 referrers |
-| `H`, `J` | repo, tag or digest, time | tag history, by tag and by manifest |
-| `A` | scope, repo, ..., day | pull counters per repo, tag, and manifest |
+| Prefix | Entity | Key | Value | Answers |
+|---|---|---|---|---|
+| `M` | Manifest | repo, digest | `ManifestRecord`: media type, own size, layer total, platform, layers, children, subject, artifact type, annotations, push time | what this manifest is, without decoding its JSON |
+| `B` | Manifest body | repo, digest | the manifest JSON, zstd-compressed | the exact bytes a manifest `GET` returns |
+| `T` | Tag | repo, tag | `TagRecord`: digest, tagged time | which digest a tag points at, sorted by tag name |
+| `G` | Manifest tag edge | repo, digest, tag | — | which tags point at a manifest, and so whether it is purgeable |
+| `L` | Blob | digest | `BlobRecord`: size | blob exists registry-wide, and its size |
+| `R` | Blob reference edge | digest, repo, manifest | — | which manifests reference a blob |
+| `P` | Repo blob | repo, digest | `RepoBlobRecord`: size, added time | blob is in this repo; the grace clock purge reads |
+| `S` | Child parent edge | repo, child, parent | — | which indexes list a per-platform manifest |
+| `F` | Referrer edge | repo, subject, referrer | `ReferrerRecord`: media type, artifact type, size, annotations | OCI 1.1 referrers, filtered during the scan |
+| `U` | Upload session | uuid | `UploadSession`: repo, offset, timestamps, digest algorithm, hasher state | where a chunked upload resumes, on any process |
+| `H` | Tag event, by tag | repo, tag, `!`time, digest | `TagEvent`: created or deleted, media type, size | one tag's history, newest first |
+| `J` | Tag event, by manifest | repo, digest, `!`time, tag | `TagEvent` | what a manifest was ever tagged, and when |
+| `A` | Counter bucket | scope, repo, subject (none at repo scope), day, shard | `CounterBucket`: manifest pulls, blob pulls, bytes out, each per hour | pull counters per repo, tag, and manifest |
+| `D` | Dead repo | repo id | `DeadRepo`: name, dropped time | the sweeper's worklist after a repository delete |
+| `n` | Repo name to id | name | repo id | the interner, and the name order `_catalog` pages in |
+| `i` | Repo id to name | repo id | name | an id back to the name a response prints |
+| `v` | Schema version | — | `SCHEMA_VERSION` | whether this build may open this store |
+
+Timestamps in `H` and `J` keys are stored complemented, written `!`time above,
+so a forward scan arrives newest first. `A` keys carry a writing-node shard so
+two nodes cannot last-write-wins over one bucket.
 
 Three rules follow from the schema:
 
