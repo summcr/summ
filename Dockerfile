@@ -96,7 +96,7 @@ USER summ:summ
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:3110/v2/ || exit 1
 
-# Split so that `docker run <image> serve --engine redb` replaces the
+# Split so that `docker run <image> serve --auth-mode private` replaces the
 # arguments and keeps the binary. The server already stops on SIGTERM and
 # drains in-flight requests, and exec form is what lets the signal reach it.
 ENTRYPOINT ["/usr/local/bin/summ"]

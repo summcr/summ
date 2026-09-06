@@ -1,0 +1,122 @@
+# syntax=docker/dockerfile:1
+
+# summ, packaged from a published release rather than built from source.
+#
+# The release workflow already builds both Linux architectures natively, on
+# runners of their own architecture, and checks each binary's dynamic
+# dependencies against an allowlist. Compiling RocksDB again here — once per
+# platform, one of them under QEMU — would take hours to arrive at the same
+# bytes. So this image fetches the asset for its target architecture and
+# verifies the checksum published beside it.
+#
+# `Dockerfile` remains the from-source build, and is what to use for an
+# untagged commit.
+#
+#   docker buildx build -f Dockerfile.release . \
+#     --platform linux/amd64,linux/arm64 \
+#     --build-arg SUMM_VERSION=v0.1.0-rc.1 \
+#     -t summcr/summ:0.1.0-rc.1 --push
+
+ARG DEBIAN_VERSION=bookworm
+ARG SUMM_VERSION=v0.1.0-rc.1
+
+# ----------------------------------------------------------------- download --
+
+# Pinned to BUILDPLATFORM, so this stage runs natively even when the target is
+# the foreign architecture: nothing here is emulated, and TARGETARCH is what
+# selects the asset. curl and tar are all it needs, so the builder's own base
+# is reused rather than pulling a second one.
+FROM --platform=$BUILDPLATFORM debian:${DEBIAN_VERSION}-slim AS download
+
+ARG SUMM_VERSION
+ARG TARGETARCH
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /dist
+
+# The asset names carry no version — that is what keeps the documented
+# `releases/latest/download/` URL stable — so the version lives in the path
+# instead. An explicit tag rather than `latest`: an image tagged with a version
+# must not change meaning when the next release is published.
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) target=x86_64-unknown-linux-gnu ;; \
+      arm64) target=aarch64-unknown-linux-gnu ;; \
+      *) echo "no summ release for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/summcr/summ/releases/download/${SUMM_VERSION}"; \
+    curl -fsSLO "${base}/summ-${target}.tar.gz"; \
+    curl -fsSLO "${base}/summ-${target}.tar.gz.sha256"; \
+    # The checksum file names the archive, so it verifies by name and a
+    # mismatched pair fails rather than silently checking the wrong file.
+    sha256sum -c "summ-${target}.tar.gz.sha256"; \
+    tar -xzf "summ-${target}.tar.gz" summ LICENSE NOTICE
+
+# ------------------------------------------------------------------ runtime --
+
+FROM debian:${DEBIAN_VERSION}-slim AS runtime
+
+# The release binary links libstdc++ statically — release.yml asserts its whole
+# `ldd` set against an allowlist of libc, libm, libgcc_s and the loader — so
+# unlike the from-source image this one needs no libstdc++6. curl is here for
+# the HEALTHCHECK and nothing else.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# An unprivileged fixed uid, so a bind-mounted host directory can be chowned to
+# a number that does not move between builds. Same 10001 as `Dockerfile` and as
+# DEPLOYMENT.md's systemd unit.
+RUN groupadd --system --gid 10001 summ \
+ && useradd --system --uid 10001 --gid summ --home-dir /var/lib/summ --shell /usr/sbin/nologin summ \
+ && mkdir -p /var/lib/summ \
+ && chown summ:summ /var/lib/summ
+
+COPY --from=download /dist/summ /usr/local/bin/summ
+COPY --from=download /dist/LICENSE /dist/NOTICE /usr/share/doc/summ/
+
+# The smoke test belongs here and not beside the download, because the stage
+# that fetched the archive is pinned to BUILDPLATFORM while the binary inside
+# it is built for TARGETARCH. Running it there works only when the two happen
+# to agree — so it passes on a native builder and on Docker Build Cloud, whose
+# arm64 leg runs on an arm64 machine, and fails with `exec format error` on a
+# single-host buildx cross-building the foreign architecture. This stage is the
+# target platform by construction, so the check runs where the binary is meant
+# to run. The checksum above verifies the bytes; this verifies they execute.
+RUN /usr/local/bin/summ --version
+
+# `meta/` and `blobs/` live here and must share a filesystem — an upload is
+# committed by renaming its staging file into the blob tree, and a rename
+# across devices is not a rename. So this is one volume, never two.
+ENV SUMM_DATA_DIR=/var/lib/summ \
+    SUMM_LOG=summ=info,summ_server=info,tower_http=info
+VOLUME ["/var/lib/summ"]
+
+# The container always serves on 3110; a host wanting another number publishes
+# one. `0.0.0.0`, not clap's `127.0.0.1` default: a published port forwards to
+# the container's external interface, which a loopback listener never sees.
+ENV SUMM_LISTEN=0.0.0.0:3110
+EXPOSE 3110
+
+USER summ:summ
+
+# `GET /v2/` is the spec's own liveness question: 200 with an empty object,
+# touching neither the blob store nor a scan.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:3110/v2/ || exit 1
+
+ARG SUMM_VERSION
+LABEL org.opencontainers.image.title="summ" \
+      org.opencontainers.image.description="An OCI Distribution Spec container registry in one binary" \
+      org.opencontainers.image.source="https://github.com/summcr/summ" \
+      org.opencontainers.image.version="${SUMM_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# Split so that `docker run <image> serve --auth-mode private` replaces the
+# arguments and keeps the binary. The server stops on SIGTERM and drains
+# in-flight requests; exec form is what lets the signal reach it.
+ENTRYPOINT ["/usr/local/bin/summ"]
+CMD ["serve"]
