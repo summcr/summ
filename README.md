@@ -44,7 +44,8 @@ from four concurrent clients at ~1.1 GB/s aggregate.
 manifests, tag history and pull counts as a flat, cursor-paged, read-only
 surface. Every list takes a cursor and a limit; the design target is 10M
 repositories and up to 10M manifests in a single one, so nothing here
-materialises an unbounded set.
+materialises an unbounded set. Both surfaces are documented in
+[docs/api.md](docs/api.md).
 
 **One binary, no dependencies.** RocksDB is compiled in and statically linked.
 No database to run, no object store, no sidecar — `./summ serve` is the whole

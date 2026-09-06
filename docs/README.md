@@ -18,6 +18,7 @@ It is a fit when you want a registry that:
 | [Setup](setup.md) | Install, first run, pushing an image, running as a service or container |
 | [Data directory](data-dir.md) | What lives under `--data-dir`, backup, and the one-filesystem rule |
 | [Authentication](auth.md) | The three `--auth-mode` values, keys, and client login |
+| [HTTP API](api.md) | The `/v2/` registry API, and the `/api/v1/` discovery API |
 | [Architecture](architecture.md) | Crates, the RocksDB metadata engine, the blob store, and the write ordering |
 
 Every flag has an environment-variable twin. `summ serve --help` lists both.
