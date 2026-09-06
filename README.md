@@ -5,12 +5,13 @@
 
 **summ** is a simple yet powerful container registry with batteries included. It
 fully supports the OCI Distribution Spec and adds the practical things a
-registry should have had all along — image pull statistics, tag history, a
-built-in web UI — so it is useful the moment it starts.
+registry should have had all along:
 
-summ is written in Rust, with a bespoke data structure for extremely efficient
-storage and retrieval of registry metadata, which is what makes it fast where
-it counts: on the four serial metadata lookups a real `docker pull` waits on.
+- Simple — a single binary, no additional databases needed
+- Powerful — written in Rust, with a bespoke data structure for extremely efficient
+  storage and retrieval of registry metadata, faster than
+  [distribution](https://github.com/distribution/distribution)
+- Batteries — built-in web UI, image pull statistics, tag history
 
 ## Live demo
 
@@ -56,11 +57,14 @@ repositories and up to 10M manifests in a single one, so nothing here
 materialises an unbounded set. Both surfaces are documented in
 [docs/api.md](docs/api.md).
 
-**One binary, no dependencies.** RocksDB is compiled in and statically linked.
-No database to run, no object store, no sidecar — `./summ serve` is the whole
-deployment. Optional API-key auth (`--auth-mode open|public-pull|private`) puts
-a read key and a write key in front of the registry, the discovery API and the
-UI at once.
+**Auth that covers everything it serves.** `--auth-mode open|public-pull|private`
+moves the registry from a laptop default, to anonymous pull with authenticated
+push, to a key on every request — and it applies to `/v2/`, the discovery API
+and the UI at once, with no exemption list. Keys are API keys sent as an HTTP
+Basic password, so `docker login` works with no token server to run; omit one
+and summ generates it and prints it once. A key supplied in `open` mode is a
+startup error, so a stray environment variable cannot leave you believing the
+registry is locked when it is not. Details in [docs/auth.md](docs/auth.md).
 
 **Conformant.** The OCI `distribution-spec` conformance suite passes with zero
 failures at every profile, including the OCI 1.1 referrers API — 1032 checks
