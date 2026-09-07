@@ -3,8 +3,21 @@
 ## Install
 
 Prebuilt binaries are on the
-[releases page](https://github.com/summcr/summ/releases). The asset names carry
-no version, so this line never changes:
+[releases page](https://github.com/summcr/summ/releases). The installer picks
+the right one from `uname`, verifies its checksum and drops `summ` in the
+current directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+```
+
+`--dir <path>` installs elsewhere, `--version <tag>` pins a release, and both
+have environment equivalents (`SUMM_INSTALL_DIR`, `SUMM_VERSION`). It is
+`scripts/install.sh` in the repository, and it does nothing a one-liner would
+not lead you to expect — no PATH edits, no service files, no sudo.
+
+The asset names carry no version, so taking one directly is a line that never
+changes either:
 
 ```sh
 curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz \
@@ -24,8 +37,9 @@ libraries left are ones every glibc system already has. The macOS builds link
 nothing beyond the OS's own libraries and run on macOS 11 and up.
 
 Every asset has a `.sha256` beside it. `dev` is a rolling prerelease built from
-`main` on demand — swap `latest/download` for `download/dev` to fetch it. Being
-a prerelease it never becomes `latest`.
+`main` on demand — swap `latest/download` for `download/dev` to fetch it, or
+pass `--version dev` to the installer. Being a prerelease it never becomes
+`latest`.
 
 To build from source you need a Rust toolchain, a C++ compiler, and `clang`
 plus `lld` on Linux. RocksDB compiles from source, so the first build takes a

@@ -117,30 +117,29 @@ alongside it.
 
 ### Prebuilt binary
 
-Download the one for your platform:
-
-**Linux x86_64**
-
 ```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz | tar -xz summ
+curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
 ```
 
-**Linux arm64**
+That reads `uname`, downloads the matching build, checks it against the
+published SHA-256 and leaves a single `summ` in the current directory. It does
+nothing else — no PATH edits, no service files, no sudo. `--dir /usr/local/bin`
+puts it somewhere else, `--version v0.1.0-rc.1` pins a release, and
+`scripts/install.sh` in this repository is the whole of it if you would rather
+read it first.
+
+Or take the tarball for your platform directly — each carries `summ`, `LICENSE`
+and `NOTICE`, with a `.sha256` beside it:
+
+| Platform | Asset |
+|---|---|
+| Linux x86_64 | [`summ-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz) |
+| Linux arm64 | [`summ-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-aarch64-unknown-linux-gnu.tar.gz) |
+| macOS Apple silicon | [`summ-aarch64-apple-darwin.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-aarch64-apple-darwin.tar.gz) |
+| macOS Intel | [`summ-x86_64-apple-darwin.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-x86_64-apple-darwin.tar.gz) |
 
 ```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-unknown-linux-gnu.tar.gz | tar -xz summ
-```
-
-**macOS Apple silicon**
-
-```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-aarch64-apple-darwin.tar.gz | tar -xz summ
-```
-
-**macOS Intel**
-
-```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-apple-darwin.tar.gz | tar -xz summ
+curl -fsSL https://github.com/summcr/summ/releases/latest/download/<asset> | tar -xz summ
 ```
 
 Then start it:
