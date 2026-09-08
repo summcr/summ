@@ -87,6 +87,18 @@ impl Ctx {
     pub fn param(&self, key: &str) -> Option<&str> {
         query::first(&self.query, key)
     }
+
+    /// A query parameter read as a switch.
+    ///
+    /// Bare `?dry-run` is on, as is any value but the three ways people write
+    /// off. Being liberal here costs nothing: the alternative is a caller who
+    /// sent `?dry-run` and got a pass that deleted things.
+    pub fn flag(&self, key: &str) -> bool {
+        match self.param(key) {
+            None => false,
+            Some(value) => !matches!(value, "false" | "0" | "no"),
+        }
+    }
 }
 
 pub async fn handle(state: AppState, endpoint: Endpoint, request: Request) -> Response {

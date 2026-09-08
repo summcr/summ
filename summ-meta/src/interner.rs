@@ -114,6 +114,22 @@ impl RepoInterner {
         Ok(id)
     }
 
+    /// The id the next new repository will be given.
+    ///
+    /// Purge reads it as a watermark. Ids are handed out in order and never
+    /// reused, so "id below the value this returned one pass ago" is exactly
+    /// "interned before that pass began" - which is what lets the pass retire
+    /// an empty name without racing the intern-then-write that creates one.
+    /// There is no cheaper way to ask: the counter is a stored key, and
+    /// nothing else in the schema records when a name appeared.
+    pub fn next_id(&self, engine: &dyn MetaEngine) -> Result<RepoId> {
+        match engine.get(&keys::repo_by_id(NEXT_ID_KEY_ID))? {
+            Some(raw) => keys::parse_repo_id(&raw)
+                .ok_or_else(|| SummError::InvalidData("bad repo id counter".into())),
+            None => Ok(0),
+        }
+    }
+
     /// Drop a mapping from the cache, for a name that no longer has one.
     ///
     /// The store is not touched: the `n`/`i` deletes belong in the caller's

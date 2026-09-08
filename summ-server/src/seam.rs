@@ -382,6 +382,53 @@ impl PullCountScope {
     }
 }
 
+/// What one purge pass did, or would do.
+///
+/// Counts rather than lists: a pass over a ten-million-blob store may reclaim a
+/// great many things, and a response that enumerated them would be the one
+/// unbounded body in this API.
+///
+/// `marked` is the one number that surprises people. A blob is not reclaimed
+/// the first time it is seen unreferenced; it is marked, and the mark has to
+/// stand for the whole grace period. So the first pass over a store that has
+/// never been purged reports thousands marked and nothing reclaimed, and that
+/// is not a failure - it is the clock starting.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PurgeReport {
+    /// Unix seconds the pass began.
+    pub started_at: u64,
+    pub duration_ms: u64,
+    /// Whether this pass wrote anything.
+    pub dry_run: bool,
+    /// Untagged manifests reclaimed. Always zero unless the operator asked for
+    /// them.
+    pub manifests: u64,
+    /// `P` memberships retracted: uploads whose manifest never arrived.
+    pub memberships: u64,
+    /// Blobs newly marked as unreferenced.
+    pub marked: u64,
+    /// Blobs whose bytes were reclaimed.
+    pub blobs: u64,
+    pub bytes: u64,
+    /// Upload sessions abandoned.
+    pub uploads: u64,
+    /// Repository names released because nothing was left under them.
+    pub repositories: u64,
+}
+
+impl PurgeReport {
+    /// Whether the pass found nothing at all. The steady state, and what keeps
+    /// a scheduled purge out of the log.
+    pub fn is_empty(&self) -> bool {
+        self.manifests == 0
+            && self.memberships == 0
+            && self.marked == 0
+            && self.blobs == 0
+            && self.uploads == 0
+            && self.repositories == 0
+    }
+}
+
 /// Failures the layers below can report, in the vocabulary of the spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpsError {
@@ -466,6 +513,33 @@ pub trait Registry: Send + Sync + 'static {
     ///
     /// `Err(OpsError::RepoUnknown)` when the repository does not exist.
     async fn delete_repository(&self, name: &str) -> OpsResult<()>;
+
+    // ---- purge -----------------------------------------------------------
+
+    /// Run one purge pass now and report what it did.
+    ///
+    /// `dry_run` counts and writes nothing, which is what makes it safe to ask
+    /// an operator to run it first.
+    ///
+    /// The default is a pass that finds nothing, which is the honest answer for
+    /// an implementation holding everything in memory: there are no bytes on a
+    /// disk to leak, and the store goes when the process does.
+    async fn purge(&self, dry_run: bool) -> OpsResult<PurgeReport> {
+        let _ = dry_run;
+        Ok(PurgeReport {
+            dry_run,
+            ..PurgeReport::default()
+        })
+    }
+
+    /// The last pass this process ran, if it has run one.
+    ///
+    /// Held in memory and lost on restart, deliberately: it describes what this
+    /// process did, and the durable answer to "what is in the store" is the
+    /// store.
+    async fn last_purge(&self) -> OpsResult<Option<PurgeReport>> {
+        Ok(None)
+    }
 
     // ---- manifests -------------------------------------------------------
 

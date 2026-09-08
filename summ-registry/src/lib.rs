@@ -33,6 +33,7 @@ pub mod cosign;
 pub mod counters;
 pub mod error;
 pub mod manifest;
+pub mod purge;
 pub mod reference;
 pub mod registry;
 pub mod uploads;
@@ -58,6 +59,7 @@ pub use discovery::{
     RepoUsagePage, TagCountPage,
 };
 pub use history::{HistoryCursor, TagEventEntry, TagHistory};
+pub use purge::{BlobScan, EmptyRepo, EmptyRepoScan, ExpiredUpload, ManifestScan, MembershipSweep};
 pub use referrers::{ReferrerEntry, ReferrerList};
 pub use tags::{TagList, TagSet};
 pub use uploads::UploadKey;

@@ -175,6 +175,11 @@ impl Registry {
         if was_member {
             batch.delete(keys::repo_blob(repo_id, digest));
         }
+        // And purge's mark, for the reason the membership sweep clears one: a
+        // membership going away has to restart the blob's clock, or a mark that
+        // matured while this repository still held the blob could collect bytes
+        // a push is halfway through referencing.
+        batch.delete(keys::blob_mark(digest));
 
         Ok(Planned {
             outcome: BlobRefDeleted {

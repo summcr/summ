@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -14,6 +15,74 @@ use crate::auth::{AuthPolicy, Generated};
 /// gigabytes - while still bounding what one request can write to the disk.
 /// `0` on the command line removes it entirely.
 pub const DEFAULT_MAX_UPLOAD_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+
+/// Purge's clocks and switches.
+///
+/// Separate from [`ServerConfig`] because no handler consults it: purge is a
+/// background pass with one API in front of it, and the numbers here belong to
+/// the pass rather than to a request. The defaults are deliberately unhurried -
+/// a registry reclaims space a day late without anyone noticing, and reclaims
+/// something still in use exactly once before the operator stops trusting it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PurgeConfig {
+    /// Whether the background pass runs at all. The API runs a pass on demand
+    /// either way: turning the schedule off is not the same as refusing to
+    /// reclaim anything, and an operator who wants the second can simply not
+    /// call it.
+    pub enabled: bool,
+    /// How often the pass runs.
+    pub interval: Duration,
+    /// How long a membership with no manifest, or a blob with no reference,
+    /// has to sit before it is reclaimed. This is the number that stops purge
+    /// racing a push between its blob uploads and its manifest `PUT`.
+    pub grace: Duration,
+    /// How long an upload session may go untouched before it is abandoned.
+    pub upload_ttl: Duration,
+    /// Whether untagged manifests are reclaimed at all. Off, and it should
+    /// stay off unless an operator knows that nothing pulls by digest here.
+    pub untagged: bool,
+    /// How old an untagged manifest has to be before the pass will take it.
+    pub untagged_min_age: Duration,
+}
+
+impl Default for PurgeConfig {
+    fn default() -> Self {
+        PurgeConfig {
+            enabled: true,
+            interval: Duration::from_secs(60 * 60),
+            grace: Duration::from_secs(24 * 60 * 60),
+            upload_ttl: Duration::from_secs(24 * 60 * 60),
+            untagged: false,
+            untagged_min_age: Duration::from_secs(7 * 24 * 60 * 60),
+        }
+    }
+}
+
+/// `30s`, `10m`, `24h`, `7d`, or a bare count of seconds.
+///
+/// A hand-written parser rather than a dependency: it is fifteen lines, the
+/// grammar is four suffixes, and a container registry's dependency graph is a
+/// supply-chain surface before it is a convenience.
+pub fn parse_duration(text: &str) -> Result<Duration, String> {
+    let text = text.trim();
+    let (count, unit) = match text.chars().last() {
+        Some(c) if c.is_ascii_digit() => (text, 1),
+        Some('s') => (&text[..text.len() - 1], 1),
+        Some('m') => (&text[..text.len() - 1], 60),
+        Some('h') => (&text[..text.len() - 1], 60 * 60),
+        Some('d') => (&text[..text.len() - 1], 24 * 60 * 60),
+        _ => {
+            return Err(format!(
+                "{text:?} is not a duration: use 30s, 10m, 24h or 7d"
+            ))
+        }
+    };
+    let count: u64 = count
+        .trim()
+        .parse()
+        .map_err(|_| format!("{text:?} is not a duration: use 30s, 10m, 24h or 7d"))?;
+    Ok(Duration::from_secs(count.saturating_mul(unit)))
+}
 
 /// Limits and switches the handlers consult. Separate from [`Cli`] so tests can
 /// construct one directly and so a future config file has somewhere to land.
@@ -206,6 +275,53 @@ pub struct ServeArgs {
     #[arg(long, value_enum, default_value = "open", env = "SUMM_AUTH_MODE")]
     pub auth_mode: AuthMode,
 
+    /// Stop the scheduled purge.
+    ///
+    /// Purge is on by default: it is what reclaims the bytes a delete leaves
+    /// behind, and a registry that leaks disk until its operator finds a flag
+    /// is not one that ships with batteries. This stops the schedule, not the
+    /// endpoint - `POST /api/v1/purge` still runs a pass.
+    #[arg(long, env = "SUMM_NO_PURGE")]
+    pub no_purge: bool,
+
+    /// How often the purge pass runs: `30s`, `10m`, `1h`, `7d`.
+    #[arg(long, default_value = "1h", value_parser = parse_duration, env = "SUMM_PURGE_INTERVAL")]
+    pub purge_interval: Duration,
+
+    /// How long content sits unreferenced before purge reclaims it.
+    ///
+    /// The clock that stops a purge racing a push between its blob uploads and
+    /// its manifest `PUT`. Lower it and that race gets likelier; there is
+    /// nothing to gain by lowering it on a registry with room on the disk.
+    #[arg(long, default_value = "24h", value_parser = parse_duration, env = "SUMM_PURGE_GRACE")]
+    pub purge_grace: Duration,
+
+    /// How long an upload may go untouched before it is abandoned.
+    ///
+    /// Measured from the last chunk, not from the start, so a slow push of a
+    /// large layer is safe however long it takes.
+    #[arg(long, default_value = "24h", value_parser = parse_duration, env = "SUMM_UPLOAD_TTL")]
+    pub upload_ttl: Duration,
+
+    /// Also reclaim manifests that no tag points at.
+    ///
+    /// Off by default, and it is the one purge switch that can lose something
+    /// somebody wanted: pulling by digest is ordinary, and a digest-pinned
+    /// deployment names manifests no tag does. Index children and signatures
+    /// are never taken, whatever this is set to.
+    #[arg(long, env = "SUMM_PURGE_UNTAGGED")]
+    pub purge_untagged: bool,
+
+    /// How old an untagged manifest has to be before `--purge-untagged` takes
+    /// it.
+    #[arg(
+        long,
+        default_value = "7d",
+        value_parser = parse_duration,
+        env = "SUMM_PURGE_UNTAGGED_MIN_AGE"
+    )]
+    pub purge_untagged_min_age: Duration,
+
     /// API key admitting `GET` and `HEAD` - pull, list, browse.
     ///
     /// Valid only with `--auth-mode private`, where an absent key is generated
@@ -240,6 +356,18 @@ impl ServeArgs {
             // round trips against per-request latency - a property of the scan
             // rather than a decision a deployment has to make.
             ..Default::default()
+        }
+    }
+
+    /// What the background pass and the purge endpoint run on.
+    pub fn purge_config(&self) -> PurgeConfig {
+        PurgeConfig {
+            enabled: !self.no_purge,
+            interval: self.purge_interval,
+            grace: self.purge_grace,
+            upload_ttl: self.upload_ttl,
+            untagged: self.purge_untagged,
+            untagged_min_age: self.purge_untagged_min_age,
         }
     }
 
@@ -415,6 +543,41 @@ mod tests {
             "zero removes the ceiling rather than rejecting every body",
         );
         assert_eq!(ceiling(&["--max-upload-bytes", "4096"]), Some(4096));
+    }
+
+    #[test]
+    fn a_duration_takes_a_suffix_or_seconds() {
+        assert_eq!(parse_duration("45"), Ok(Duration::from_secs(45)));
+        assert_eq!(parse_duration("30s"), Ok(Duration::from_secs(30)));
+        assert_eq!(parse_duration("10m"), Ok(Duration::from_secs(600)));
+        assert_eq!(parse_duration("24h"), Ok(Duration::from_secs(86_400)));
+        assert_eq!(parse_duration("7d"), Ok(Duration::from_secs(604_800)));
+        for bad in ["", "h", "1w", "-1h", "1.5h", "soon"] {
+            assert!(parse_duration(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn purge_is_scheduled_by_default_and_takes_untagged_manifests_only_when_asked() {
+        let default = args(&[]).expect("parses").purge_config();
+        assert!(default.enabled, "a registry that leaks disk by default");
+        assert!(!default.untagged, "digest-pinned images are not garbage");
+        assert_eq!(default, PurgeConfig::default());
+
+        let tuned = args(&[
+            "--no-purge",
+            "--purge-untagged",
+            "--purge-grace",
+            "2h",
+            "--upload-ttl",
+            "30m",
+        ])
+        .expect("parses")
+        .purge_config();
+        assert!(!tuned.enabled);
+        assert!(tuned.untagged);
+        assert_eq!(tuned.grace, Duration::from_secs(7_200));
+        assert_eq!(tuned.upload_ttl, Duration::from_secs(1_800));
     }
 
     #[test]

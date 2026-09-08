@@ -155,6 +155,24 @@ impl Registry {
 }
 
 impl Registry {
+    /// The text form of an upload id, as the `Location` header spelled it.
+    ///
+    /// Purge needs it: a `U` key holds the raw sixteen bytes, and the staging
+    /// file beside it is named by the text. Hyphenated, because that is the
+    /// form this registry mints and therefore the name on disk;
+    /// [`Registry::parse_upload_id`] accepts either, so the pair round-trips
+    /// whichever the client echoed back.
+    pub fn format_upload_id(id: &UploadKey) -> String {
+        let mut out = String::with_capacity(36);
+        for (i, byte) in id.iter().enumerate() {
+            if matches!(i, 4 | 6 | 8 | 10) {
+                out.push('-');
+            }
+            out.push_str(&format!("{byte:02x}"));
+        }
+        out
+    }
+
     /// Parse the text form of an upload id into its key bytes.
     ///
     /// Hyphenated or bare hex, case-insensitive - the id summ mints is a
@@ -194,6 +212,13 @@ fn malformed(id: &str) -> RegistryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_id_formats_back_to_the_name_on_disk() {
+        let hyphenated = "58fd54e5-1720-4ed9-a39d-ff9800ac6790";
+        let key = Registry::parse_upload_id(hyphenated).unwrap();
+        assert_eq!(Registry::format_upload_id(&key), hyphenated);
+    }
 
     #[test]
     fn an_id_parses_hyphenated_or_bare_and_nothing_else() {

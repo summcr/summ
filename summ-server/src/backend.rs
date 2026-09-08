@@ -33,13 +33,13 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::body::{Body, Bytes};
 use futures_util::StreamExt;
-use summ_core::{Digest, ManifestRecord, Platform, SummError, TagEventKind, Timestamp};
+use summ_core::{Digest, ManifestRecord, Platform, RepoId, SummError, TagEventKind, Timestamp};
 #[cfg(feature = "redb")]
 use summ_meta::RedbEngine;
 use summ_meta::{MetaEngine, RocksEngine};
@@ -51,13 +51,15 @@ use summ_registry::{
 use summ_storage::{BlobStore, DigestAlgorithm, UploadId};
 use tokio::sync::Notify;
 
+use crate::config::PurgeConfig;
 use crate::counters::{PullCounters, Recorded, Subject};
 use crate::range::ByteRange;
 use crate::reference::Reference;
 use crate::seam::{
     BlobRead, Descriptor, HistoryCursor, ManifestInfo, ManifestPut, ManifestStat, OpsError,
-    OpsResult, Page, PullCountDay, PullCountScope, Referrers, Registry, RepoDetail, RepoPage,
-    RepoSummary, TagEventInfo, TagInfo, Tally, UploadBody, COUNT_CEILING, TAGS_PER_MANIFEST,
+    OpsResult, Page, PullCountDay, PullCountScope, PurgeReport, Referrers, Registry, RepoDetail,
+    RepoPage, RepoSummary, TagEventInfo, TagInfo, Tally, UploadBody, COUNT_CEILING,
+    TAGS_PER_MANIFEST,
 };
 
 /// Which metadata engine [`Backend::open`] opens.
@@ -260,11 +262,61 @@ impl RepoLocks {
     }
 }
 
+/// Serialises a blob's commit against purge's collection of it.
+///
+/// The window it closes: purge decides a blob is unreferenced, and a commit of
+/// the same digest renames bytes into place and writes `L` before the file is
+/// removed. The result would be an `L` record naming a file that is not there,
+/// which is the one failure this registry treats as corruption rather than as
+/// garbage.
+///
+/// Striped by digest, on the pattern of [`RepoLocks`] and for the same reason:
+/// a fixed array cannot grow with the store and cannot need an eviction policy.
+/// Two differences from the tag locks are worth stating. A commit takes exactly
+/// one of these, always for the digest it is committing, so there is no lock
+/// ordering to get wrong; and where two pushes to one repository collide on the
+/// tag lock by construction, two commits collide here only if they are the same
+/// content or they land on the same shard by accident.
+struct BlobLocks {
+    shards: Box<[tokio::sync::Mutex<()>]>,
+}
+
+impl BlobLocks {
+    const SHARDS: usize = 256;
+
+    fn new() -> Self {
+        BlobLocks {
+            shards: (0..Self::SHARDS)
+                .map(|_| tokio::sync::Mutex::new(()))
+                .collect(),
+        }
+    }
+
+    fn of(&self, digest: &Digest) -> &tokio::sync::Mutex<()> {
+        let mut hasher = DefaultHasher::new();
+        digest.hash(&mut hasher);
+        &self.shards[(hasher.finish() as usize) % Self::SHARDS]
+    }
+}
+
 pub struct Backend {
     ops: Arc<Ops>,
     blobs: BlobStore,
     /// Held across the plan and the apply of a tag mutation. See [`RepoLocks`].
     tags: RepoLocks,
+    /// Held from a blob's rename to its metadata commit, and by purge over the
+    /// decision to reclaim it. See [`BlobLocks`].
+    blob_locks: BlobLocks,
+    /// Purge's clocks and switches. Consulted by the scheduled pass and by the
+    /// one the API runs on demand, which are the same pass.
+    purge: PurgeConfig,
+    /// What the last completed pass did. In memory and lost on restart: it
+    /// describes what this process did, and the store is the durable answer to
+    /// what is in the store.
+    last_pass: Mutex<Option<PurgeReport>>,
+    /// The id the interner would have handed out at the start of the previous
+    /// pass. See [`Backend::purge_names`].
+    purge_mark: Mutex<Option<RepoId>>,
     /// Woken by a repository delete so the sweeper starts on it now rather
     /// than at the next tick. The tick is the fallback that picks up work left
     /// by a crash; this is what makes an ordinary delete feel immediate.
@@ -317,8 +369,22 @@ impl Backend {
             ops: Arc::new(Ops::with_options(engine, options)),
             blobs,
             tags: RepoLocks::new(),
+            blob_locks: BlobLocks::new(),
+            purge: PurgeConfig::default(),
+            last_pass: Mutex::new(None),
+            purge_mark: Mutex::new(None),
             sweep: Arc::new(Notify::new()),
         })
+    }
+
+    /// Set purge's clocks and switches.
+    ///
+    /// Separate from [`Backend::open`] because opening a store is not where a
+    /// policy belongs, and because every test that opens one wants the
+    /// defaults. `summ serve` calls it with what the command line said.
+    pub fn with_purge(mut self, purge: PurgeConfig) -> Self {
+        self.purge = purge;
+        self
     }
 
     /// The instant this request began, read here and passed down.
@@ -545,6 +611,16 @@ impl Registry for Backend {
         // a permit if the task is mid-pass, so nothing is lost the other way.
         self.sweep.notify_one();
         Ok(())
+    }
+
+    // ---- purge -----------------------------------------------------------
+
+    async fn purge(&self, dry_run: bool) -> OpsResult<PurgeReport> {
+        self.purge_once(dry_run).await.map_err(OpsError::Internal)
+    }
+
+    async fn last_purge(&self) -> OpsResult<Option<PurgeReport>> {
+        Ok(self.last_pass.lock().ok().and_then(|last| last.clone()))
     }
 
     // ---- manifests -------------------------------------------------------
@@ -795,6 +871,9 @@ impl Registry for Backend {
         let name = name.to_string();
         let from = from.map(str::to_string);
         let digest = *digest;
+        // Serialised against purge's collection of these bytes: the mount is
+        // about to promise a client that content it did not upload is here.
+        let _bytes = self.blob_locks.of(&digest).lock().await;
         self.write(move |ops| {
             let size = match &from {
                 // Named source: the source repo must itself have been entitled
@@ -818,6 +897,11 @@ impl Registry for Backend {
             // copied, because content is addressed by digest and already
             // there.
             ops.commit_blob(&name, &digest, size, now)?;
+            // `commit_blob` also retracts purge's mark, which is what stops the
+            // pass from reclaiming bytes this mount has just promised - a mount
+            // writes `P` and no `R`, so a mark is the only thing that would
+            // hear about it.
+
             Ok(Some(()))
         })
         .await
@@ -944,6 +1028,14 @@ impl Registry for Backend {
 
         drain_into(&mut upload, body).await?;
 
+        // Held from the rename to the metadata commit, and taken after the
+        // body rather than around it: a lock held for the length of a layer
+        // transfer would serialise every push that collided on its shard,
+        // where this one is held for an fsync and a batch. Without it purge
+        // could reclaim a blob whose bytes this commit has just replaced,
+        // leaving an `L` record naming a file that is gone.
+        let _bytes = self.blob_locks.of(digest).lock().await;
+
         // Commit fsyncs the bytes *and* the containing directory before it
         // returns, so the batch below is genuinely the commit point. On a
         // digest mismatch nothing is created and the session survives, which
@@ -1004,14 +1096,23 @@ impl Registry for Backend {
             .create_upload(&id, algo)
             .await
             .map_err(storage_error)?;
-        let commit = async {
-            drain_into(&mut upload, body).await?;
-            self.blobs
+        let drained = drain_into(&mut upload, body).await;
+        // As in `finish_upload`: taken after the body is on disk and held from
+        // the rename through the metadata commit.
+        let _bytes = self.blob_locks.of(digest).lock().await;
+        let commit = match drained {
+            Ok(_) => self
+                .blobs
                 .commit_upload(upload, digest)
                 .await
-                .map_err(storage_error)
-        }
-        .await;
+                .map_err(storage_error),
+            Err(e) => {
+                // Nothing renamed anything, so the staging file is this
+                // function's to clean up on the way out.
+                let _ = self.blobs.cancel_upload(&id).await;
+                return Err(e);
+            }
+        };
 
         let size = match commit {
             Ok(size) => size,
@@ -1465,6 +1566,393 @@ impl Backend {
         blocking(move || ops.finish_repo_sweep(id)).await?;
         tracing::info!(repo = name, id, manifests, "repository swept");
         Ok(manifests)
+    }
+}
+
+// ---- purge ---------------------------------------------------------------
+
+/// Manifests, memberships or blobs one step of a pass examines.
+///
+/// Bounds the batch and the memory a step holds, and nothing else: the cursor
+/// carries across steps, so each stage stays one sequential walk of its range
+/// however many steps it takes.
+const PURGE_STEP: usize = 500;
+
+/// Repository names one page of a pass examines.
+const PURGE_NAMES: usize = 500;
+
+/// Upload sessions one pass looks at. `U` holds one key per upload in flight,
+/// so this is a ceiling on concurrency rather than on the size of the registry.
+const PURGE_UPLOADS: usize = 10_000;
+
+/// `now` less a span, floored at the epoch.
+fn ago(now: Timestamp, span: Duration) -> Timestamp {
+    Timestamp::from_secs(now.secs().saturating_sub(span.as_secs()))
+}
+
+impl Backend {
+    /// Start the scheduled purge: the pass that reclaims what the deletes leave
+    /// behind.
+    ///
+    /// Detached and never joined, like the pull-count flush and the repository
+    /// sweeper, and for the sweeper's reason: every stage is derived from the
+    /// store on each pass, so a pass killed half way through is not lost work -
+    /// it is work the next pass does. What a shutdown costs is time.
+    ///
+    /// Returns whether the schedule started, which is what the startup banner
+    /// reports. `--no-purge` stops the schedule and nothing else: `POST
+    /// /api/v1/purge` still runs a pass, because "not hourly" and "never" are
+    /// different instructions.
+    pub fn spawn_purger(self: &Arc<Self>) -> bool {
+        if !self.purge.enabled {
+            return false;
+        }
+        let backend = Arc::clone(self);
+        let interval = self.purge.interval;
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // The first tick fires immediately, and a pass at startup is what a
+            // crash loop would turn into a purge loop. Nothing is waiting on
+            // this work, so the first pass is one interval away.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match backend.purge_once(false).await {
+                    // A pass that found nothing is the steady state and says
+                    // nothing, or the log becomes something an operator filters
+                    // out and then stops reading.
+                    Ok(report) if report.is_empty() => {}
+                    Ok(report) => tracing::info!(
+                        manifests = report.manifests,
+                        memberships = report.memberships,
+                        marked = report.marked,
+                        blobs = report.blobs,
+                        bytes = report.bytes,
+                        uploads = report.uploads,
+                        repositories = report.repositories,
+                        ms = report.duration_ms,
+                        "purged"
+                    ),
+                    // Logged and dropped, like a failed sweep. Every stage is a
+                    // sequence of atomic batches, so nothing is left half done,
+                    // and the next pass starts from what the store now says.
+                    Err(e) => tracing::warn!(error = %e, "purge pass failed"),
+                }
+            }
+        });
+        true
+    }
+
+    /// One pass: untagged manifests, memberships, blobs, uploads, names.
+    ///
+    /// The order is the point. Each stage releases work for the next - a
+    /// manifest delete retracts `R` edges, a retracted membership leaves a blob
+    /// unreferenced - so one pass carries a repository delete all the way to
+    /// reclaimed bytes rather than taking five.
+    ///
+    /// `dry_run` writes nothing anywhere, which is what makes it safe to ask an
+    /// operator to run one before turning the schedule on.
+    ///
+    /// Two passes may run at once - the schedule and an impatient `POST` - and
+    /// that is safe rather than merely tolerated: every stage re-checks its
+    /// decision under whatever lock protects it, and every step is an atomic
+    /// batch. What overlapping passes cost is duplicated reading, so the second
+    /// one usually reports nothing.
+    ///
+    /// Public so a test can run a pass rather than wait for a tick, and so the
+    /// API has something to call.
+    pub async fn purge_once(&self, dry_run: bool) -> Result<PurgeReport, String> {
+        let now = self.now();
+        let began = std::time::Instant::now();
+        let mut report = PurgeReport {
+            started_at: now.secs(),
+            dry_run,
+            ..PurgeReport::default()
+        };
+
+        if self.purge.untagged {
+            self.purge_untagged(&mut report, now, dry_run).await?;
+        }
+        self.purge_memberships(&mut report, now, dry_run).await?;
+        self.purge_blobs(&mut report, now, dry_run).await?;
+        self.purge_uploads(&mut report, now, dry_run).await?;
+        self.purge_names(&mut report, dry_run).await?;
+
+        report.duration_ms = began.elapsed().as_millis() as u64;
+        if !dry_run {
+            if let Ok(mut last) = self.last_pass.lock() {
+                *last = Some(report.clone());
+            }
+        }
+        Ok(report)
+    }
+
+    /// Untagged manifests, repository by repository, when the operator has
+    /// asked for them.
+    async fn purge_untagged(
+        &self,
+        report: &mut PurgeReport,
+        now: Timestamp,
+        dry_run: bool,
+    ) -> Result<(), String> {
+        let cutoff = ago(now, self.purge.untagged_min_age);
+        let mut after: Option<String> = None;
+        loop {
+            let ops = Arc::clone(&self.ops);
+            let at = after.clone();
+            let page = blocking(move || ops.list_repos(at.as_deref(), PURGE_NAMES)).await?;
+            for repo in &page.repos {
+                self.purge_untagged_in(repo, report, cutoff, now, dry_run)
+                    .await?;
+            }
+            match page.next {
+                Some(next) => after = Some(next),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    async fn purge_untagged_in(
+        &self,
+        repo: &str,
+        report: &mut PurgeReport,
+        cutoff: Timestamp,
+        now: Timestamp,
+        dry_run: bool,
+    ) -> Result<(), String> {
+        let mut cursor: Option<Vec<u8>> = None;
+        loop {
+            let ops = Arc::clone(&self.ops);
+            let name = repo.to_string();
+            let at = cursor.clone();
+            let scan =
+                optional(move || ops.purgeable_manifests(&name, at.as_deref(), PURGE_STEP, cutoff))
+                    .await?;
+            // Deleted while the pass walked the catalogue. Its manifests went
+            // with it, which is what this stage wanted anyway.
+            let Some(scan) = scan else { return Ok(()) };
+
+            for digest in scan.digests {
+                if dry_run {
+                    report.manifests += 1;
+                    continue;
+                }
+                // The lock a `DELETE` takes, for the reason a `DELETE` takes
+                // it: the guards were checked by a scan holding nothing, and a
+                // tag pushed in between is exactly the interleaving that would
+                // otherwise reclaim a manifest somebody had just named.
+                // `purge_manifest` re-checks them all under it.
+                let _tags = self.tags.of(repo).lock().await;
+                let ops = Arc::clone(&self.ops);
+                let name = repo.to_string();
+                let deleted =
+                    optional(move || ops.purge_manifest(&name, &digest, cutoff, now)).await?;
+                if matches!(deleted, Some(Some(_))) {
+                    report.manifests += 1;
+                }
+            }
+
+            match scan.next {
+                Some(next) => cursor = Some(next),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Memberships whose manifest never arrived.
+    async fn purge_memberships(
+        &self,
+        report: &mut PurgeReport,
+        now: Timestamp,
+        dry_run: bool,
+    ) -> Result<(), String> {
+        let cutoff = ago(now, self.purge.grace);
+        let mut cursor: Option<Vec<u8>> = None;
+        loop {
+            let ops = Arc::clone(&self.ops);
+            let at = cursor.clone();
+            let step =
+                blocking(move || ops.sweep_repo_blobs(at.as_deref(), PURGE_STEP, cutoff, dry_run))
+                    .await?;
+            report.memberships += step.retracted as u64;
+            match step.next {
+                Some(next) => cursor = Some(next),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// The marks, and the blobs whose marks have matured.
+    async fn purge_blobs(
+        &self,
+        report: &mut PurgeReport,
+        now: Timestamp,
+        dry_run: bool,
+    ) -> Result<(), String> {
+        let cutoff = ago(now, self.purge.grace);
+        let mut cursor: Option<Vec<u8>> = None;
+        loop {
+            let ops = Arc::clone(&self.ops);
+            let at = cursor.clone();
+            let scan =
+                blocking(move || ops.scan_blobs(at.as_deref(), PURGE_STEP, cutoff, now, dry_run))
+                    .await?;
+            report.marked += scan.marked as u64;
+
+            for (digest, size) in scan.ripe {
+                if dry_run {
+                    report.blobs += 1;
+                    report.bytes += size;
+                    continue;
+                }
+                // Every condition is re-checked inside the lock, because the
+                // scan that produced this candidate held nothing and a commit
+                // of the same digest may have landed since.
+                let _bytes = self.blob_locks.of(&digest).lock().await;
+                let ops = Arc::clone(&self.ops);
+                let Some(size) = blocking(move || ops.collect_blob(&digest, cutoff)).await? else {
+                    continue;
+                };
+                // Metadata first, bytes second. An `L` record whose file is
+                // gone is a pull that fails; a file whose `L` record is gone is
+                // inert, but nothing reclaims it either - the scan walks `L`,
+                // so a crash between these two steps leaks the bytes until the
+                // orphan-file scrub exists.
+                self.blobs
+                    .delete_blob(&digest)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                report.blobs += 1;
+                report.bytes += size;
+            }
+
+            match scan.next {
+                Some(next) => cursor = Some(next),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Upload sessions nobody has touched inside the TTL.
+    async fn purge_uploads(
+        &self,
+        report: &mut PurgeReport,
+        now: Timestamp,
+        dry_run: bool,
+    ) -> Result<(), String> {
+        let cutoff = ago(now, self.purge.upload_ttl);
+        let ops = Arc::clone(&self.ops);
+        let expired = blocking(move || ops.expired_uploads(cutoff, PURGE_UPLOADS)).await?;
+
+        for upload in expired {
+            if dry_run {
+                report.uploads += 1;
+                continue;
+            }
+            let ops = Arc::clone(&self.ops);
+            let id = upload.id;
+            blocking(move || ops.delete_upload(&id)).await?;
+            // Session record first, staging file second - the order
+            // `cancel_upload` uses, and for its reason: the record is what
+            // makes the upload findable, so an orphaned staging file is
+            // garbage rather than a session pointing at bytes that are gone.
+            if let Ok(id) = upload_id(&Ops::format_upload_id(&upload.id)) {
+                let _ = self.blobs.cancel_upload(&id).await;
+            }
+            report.uploads += 1;
+        }
+        Ok(())
+    }
+
+    /// Names with nothing under them.
+    ///
+    /// The watermark is what makes this safe without a lock over interning.
+    /// A name is created by its own batch, before any key beneath it exists, so
+    /// a pass that judged emptiness alone would race the gap between interning
+    /// a name and writing the first key under it. Ids are handed out in order
+    /// and never reused, so "id below the counter as it stood at the start of
+    /// the *previous* pass" means "interned before that pass began", and a name
+    /// created since is left alone however empty it looks.
+    ///
+    /// The first pass after a restart therefore retires nothing: it has no
+    /// previous pass to compare against, and one interval of patience is the
+    /// whole cost of not holding a lock on the upload path.
+    async fn purge_names(&self, report: &mut PurgeReport, dry_run: bool) -> Result<(), String> {
+        let ops = Arc::clone(&self.ops);
+        let current = blocking(move || ops.next_repo_id()).await?;
+        let watermark = self.purge_mark.lock().ok().and_then(|mark| *mark);
+        if !dry_run {
+            if let Ok(mut mark) = self.purge_mark.lock() {
+                *mark = Some(current);
+            }
+        }
+        let Some(watermark) = watermark else {
+            return Ok(());
+        };
+
+        let mut after: Option<String> = None;
+        loop {
+            let live = self.live_upload_repos().await?;
+            let ops = Arc::clone(&self.ops);
+            let at = after.clone();
+            let page =
+                blocking(move || ops.empty_repos(at.as_deref(), PURGE_NAMES, &live, watermark))
+                    .await?;
+
+            for repo in &page.repos {
+                if dry_run {
+                    report.repositories += 1;
+                    continue;
+                }
+                // The tag lock again: it is what a manifest push holds across
+                // the plan and apply that would put the first key under this
+                // name. `retire_repo` re-checks emptiness under it, against a
+                // fresh list of the repositories an upload is holding open.
+                let _tags = self.tags.of(&repo.name).lock().await;
+                let live = self.live_upload_repos().await?;
+                let ops = Arc::clone(&self.ops);
+                let name = repo.name.clone();
+                let retired = blocking(move || ops.retire_repo(&name, &live, watermark)).await?;
+                if retired.is_some() {
+                    report.repositories += 1;
+                }
+            }
+
+            match page.next {
+                Some(next) => after = Some(next),
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Repositories an unfinished upload is holding open.
+    ///
+    /// Purge must treat these as live: retiring a name an in-flight session
+    /// still points at would leave the session unable to resolve its own
+    /// repository, and the client's next chunk answering `404`.
+    async fn live_upload_repos(&self) -> Result<Vec<RepoId>, String> {
+        let ops = Arc::clone(&self.ops);
+        blocking(move || ops.live_upload_repos(PURGE_UPLOADS)).await
+    }
+}
+
+/// Like [`blocking`], but a repository that vanished mid-pass is no work rather
+/// than a failure.
+///
+/// Purge walks the catalogue a page at a time and then walks each name, so a
+/// delete landing between the two is ordinary rather than exceptional - and the
+/// delete did the stage's work for it.
+async fn optional<T, F>(f: F) -> Result<Option<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> summ_registry::Result<T> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(Ok(value)) => Ok(Some(value)),
+        Ok(Err(RegistryError::NameUnknown { .. })) => Ok(None),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
