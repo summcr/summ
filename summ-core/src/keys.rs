@@ -653,6 +653,7 @@ mod tests {
             PREFIX_TAG_HISTORY,
             PREFIX_MANIFEST_TAG_HISTORY,
             PREFIX_COUNTER,
+            PREFIX_DEAD_REPO,
             PREFIX_REPO_BY_NAME,
             PREFIX_REPO_BY_ID,
             PREFIX_DB_VERSION,
