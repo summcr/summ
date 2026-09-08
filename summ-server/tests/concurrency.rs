@@ -51,7 +51,7 @@ use axum::Router;
 use sha2::{Digest as _, Sha256};
 use summ_registry::RegistryOptions;
 use summ_server::backend::{Backend, Engine};
-use summ_server::config::ServerConfig;
+use summ_server::config::{PurgeConfig, ServerConfig};
 use summ_server::counters::PullCounters;
 use summ_server::{router, AppState};
 use tempfile::TempDir;
@@ -152,8 +152,18 @@ struct Harness {
 
 impl Harness {
     fn open(dir: &Path) -> Arc<Self> {
+        Self::with_purge(dir, PurgeConfig::default())
+    }
+
+    /// The same registry with purge's clocks wound down, for the one scenario
+    /// that races a pass against the writers. No task is spawned here either:
+    /// the scenario runs `purge_once` in a loop, so the pass is as concurrent
+    /// as a scheduled one and the test does not wait for a tick.
+    fn with_purge(dir: &Path, purge: PurgeConfig) -> Arc<Self> {
         let backend = Arc::new(
-            Backend::open(dir, Engine::Rocks, RegistryOptions::default()).expect("backend opens"),
+            Backend::open(dir, Engine::Rocks, RegistryOptions::default())
+                .expect("backend opens")
+                .with_purge(purge),
         );
         // Counting is on, as it is in `summ serve`, but with no flush task:
         // `flush` is the tick, taken by hand where a test needs one.
@@ -1374,4 +1384,172 @@ async fn concurrent_pulls_are_counted_exactly_once() {
         Some(expected)
     );
     eprintln!("S7: {expected} pulls counted exactly");
+}
+
+// ------------------------------------------- S8: purge against a commit --
+
+/// A purge pass running flat out against commits and pulls of the same blobs.
+///
+/// The clocks are set to zero, so every pass is entitled to reclaim every
+/// unreferenced blob it sees, and a run reclaims hundreds while the writers are
+/// still pushing them. What is asserted is not that a blob survives - under
+/// this configuration it usually does not - but that nothing is ever seen half
+/// done: every `GET` answers the whole verified blob or `404`, and at rest the
+/// registry still has whatever it says it has.
+///
+/// **What this does and does not establish.** The failure it describes is real:
+/// a commit renames bytes into place and then writes `L`, so a collection
+/// landing between the two leaves an `L` record naming a file that is gone -
+/// the one failure this registry treats as corruption rather than as garbage,
+/// because it surfaces as a broken pull days later to somebody else. That is
+/// what `BlobLocks` closes. But the gap it closes is on the order of a hundred
+/// microseconds, and this scenario does not force it: removing the lock does
+/// not reliably fail the test. What it does gate is everything coarser - a pass
+/// reclaiming a blob something still references, a raced pull answering `5xx`,
+/// the tag lock and the digest locks deadlocking against each other - and it
+/// gates that at a few hundred collections per run.
+///
+/// The final check is the one the readers structurally cannot make. A torn
+/// commit is invisible over HTTP while the run is going, because a blob whose
+/// file has been reclaimed answers `404` exactly like one that was never
+/// pushed; at rest, `HEAD` saying 200 while the bytes are gone is the state
+/// that cannot be explained away.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_commit_racing_a_collection_is_never_seen_half_done() {
+    let dir = TempDir::new().expect("tempdir");
+    let h = Harness::with_purge(
+        dir.path(),
+        PurgeConfig {
+            grace: Duration::ZERO,
+            upload_ttl: Duration::from_secs(3_600),
+            ..PurgeConfig::default()
+        },
+    );
+    let deadline = Deadline::new();
+    // A pool rather than one blob: a layer being re-pushed on a loop is never
+    // still long enough to be collected, so the pass would never reach the
+    // delete this scenario exists to race. Eight of them means some are being
+    // committed while others are being taken.
+    let pool: Vec<Vec<u8>> = (0..8)
+        .map(|i| format!("the layer the pass keeps trying to take, no {i}").into_bytes())
+        .collect();
+
+    let mut writers = Vec::new();
+    for i in 0..2 {
+        let h = h.clone();
+        let deadline = deadline.clone();
+        let pool = pool.clone();
+        let mut rng = Rng(seed() ^ i);
+        writers.push(tokio::spawn(async move {
+            let mut commits = 0u64;
+            while deadline.live() {
+                let body = &pool[(rng.next() % pool.len() as u64) as usize];
+                if h.push_blob("race/collected", body).await.status == StatusCode::CREATED {
+                    commits += 1;
+                }
+                rng.jitter().await;
+            }
+            commits
+        }));
+    }
+
+    // The pass, as tight as it will go.
+    let purger = {
+        let h = h.clone();
+        let deadline = deadline.clone();
+        tokio::spawn(async move {
+            let mut reclaimed = 0u64;
+            while deadline.live() {
+                let report = h.backend.purge_once(false).await.expect("a pass");
+                reclaimed += report.blobs;
+                tokio::task::yield_now().await;
+            }
+            reclaimed
+        })
+    };
+
+    let mut readers = Vec::new();
+    for i in 0..width() {
+        let h = h.clone();
+        let deadline = deadline.clone();
+        let pool = pool.clone();
+        let mut rng = Rng(seed() ^ (0xC0FFEE + i as u64));
+        readers.push(tokio::spawn(async move {
+            let mut findings = Findings::new();
+            let mut reads = 0u64;
+            while deadline.live() {
+                let expected = &pool[(rng.next() % pool.len() as u64) as usize];
+                let digest = sha256_hex(expected);
+                let reply = h.get(&format!("/v2/race/collected/blobs/{digest}")).await;
+                reads += 1;
+                match reply.status {
+                    // Reclaimed, or not yet committed. Both are honest answers
+                    // to "is this blob here", and both are what a client that
+                    // has not referenced its layer must be ready for.
+                    StatusCode::NOT_FOUND => {}
+                    StatusCode::OK if reply.body.as_ref() == expected.as_slice() => {}
+                    StatusCode::OK => findings.push(format!(
+                        "a 200 carried {} bytes, not {}: the metadata outlived \
+                         the file",
+                        reply.body.len(),
+                        expected.len()
+                    )),
+                    other => findings.push(format!(
+                        "{other} while a commit raced a collection; only 200 and \
+                         404 are honest answers here"
+                    )),
+                }
+                rng.jitter().await;
+            }
+            (findings, reads)
+        }));
+    }
+
+    let mut commits = 0u64;
+    for writer in writers {
+        commits += writer.await.expect("a writer");
+    }
+    deadline.halt();
+    let reclaimed = purger.await.expect("the purger");
+
+    let mut findings = Findings::new();
+    let mut reads = 0u64;
+    for reader in readers {
+        let (seen, count) = reader.await.expect("a reader");
+        findings.extend(seen);
+        reads += count;
+    }
+    report(
+        "a_commit_racing_a_collection_is_never_seen_half_done",
+        findings,
+    );
+
+    // The assertion the readers structurally cannot make, taken at rest.
+    //
+    // A torn commit leaves an `L` record whose file is gone, and that state is
+    // *stable*: nothing rewrites it, and every later pull of a manifest naming
+    // the blob fails. It is invisible over HTTP while the run is going, because
+    // a blob whose file has been reclaimed answers `404` exactly like one that
+    // was never pushed. So the check is made here, with the writers and the
+    // pass both stopped: whatever the registry still says it has, it must have.
+    for body in &pool {
+        let digest = sha256_hex(body);
+        let head = h.head(&format!("/v2/race/collected/blobs/{digest}")).await;
+        if head.status != StatusCode::OK {
+            continue;
+        }
+        let reply = h.get(&format!("/v2/race/collected/blobs/{digest}")).await;
+        assert_eq!(
+            reply.status,
+            StatusCode::OK,
+            "the registry answered HEAD 200 for {digest} and then lost the bytes: \
+             a commit was collected half way through"
+        );
+        assert_eq!(reply.body.as_ref(), body.as_slice(), "{digest}");
+    }
+
+    // Reported rather than asserted: how much of the window the run actually
+    // swept is a property of the machine, and a run that reclaimed nothing
+    // proved less than one that reclaimed hundreds without a torn read.
+    eprintln!("S8: {reads} reads across {commits} commits and {reclaimed} collections");
 }

@@ -738,3 +738,17 @@ h2.section {
   .danger-head { flex-direction: column; gap: 12px; }
   .danger-head .danger-button { margin-left: 0; }
 }
+
+/* ---- purge, on the catalogue ------------------------------------------- */
+
+/* Borrows the delete section's note, form and status rules and none of its
+   colour: purge reclaims what is already unreferenced, so it is maintenance
+   rather than a thing to be talked out of. */
+.maintenance {
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.maintenance h2.section { margin-top: 0; }
+.maintenance .danger-status { min-height: 16px; }

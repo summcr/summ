@@ -81,13 +81,13 @@ Things worth knowing that the spec leaves open:
   conformance suite never calls it. summ implements it because every client
   expects it, with the pagination rules above.
 - **Deleting a manifest is `202`,** and by tag as well as by digest. Blob bytes
-  are reclaimed by purge, not by the delete.
+  are reclaimed by [purge](#purge), not by the delete.
 
 ## The discovery API — `/api/v1/`
 
 Nothing standard answers "what is in this registry", "what did this tag point at
 last week", or "what is actually being pulled". These do. They are read-only
-apart from `DELETE /api/v1/repositories/<name>`.
+apart from `DELETE /api/v1/repositories/<name>` and `POST /api/v1/purge`.
 
 | Endpoint | Methods | Answers |
 |---|---|---|
@@ -100,6 +100,8 @@ apart from `DELETE /api/v1/repositories/<name>`.
 | `/api/v1/tag-history/<name>@<reference>` | `GET`, `HEAD` | Tag events, newest first |
 | `/api/v1/pull-counts/<name>` | `GET`, `HEAD` | Pull counts for a repository, per day and per hour |
 | `/api/v1/pull-counts/<name>@<reference>` | `GET`, `HEAD` | The same for one tag or one manifest |
+| `/api/v1/purge` | `GET`, `HEAD` | What the last purge pass reclaimed |
+| `/api/v1/purge` | `POST` | Run a purge pass now. `?dry-run` counts and writes nothing |
 
 Four conventions hold across all of them:
 
@@ -181,7 +183,60 @@ the response returns — a `GET` of it, its tags or its manifests is an immediat
 can observe distinguishes the two states.
 
 Blob bytes are not reclaimed by the delete. Layers are shared registry-wide, and
-whether this repository was the last user of one is purge's question.
+whether this repository was the last user of one is [purge](#purge)'s question.
+
+### Purge
+
+```
+GET  /api/v1/purge
+POST /api/v1/purge
+POST /api/v1/purge?dry-run=true
+```
+
+Purge is the pass that reclaims what a delete leaves behind: layer bytes nothing
+references any more, memberships whose manifest never arrived, uploads nobody
+finished, and repository names with nothing under them. It runs on a schedule
+(`--purge-interval`, hourly by default) and `POST` runs the same pass now.
+
+`POST` is a write, so under `public-pull` or `private` it needs the write key,
+like a delete. It answers when the pass is finished, with what it did:
+
+```json
+{
+  "started_at": 1788696000,
+  "duration_ms": 412,
+  "dry_run": false,
+  "manifests": 0,
+  "memberships": 3,
+  "marked": 51,
+  "blobs": 47,
+  "bytes": 4831838208,
+  "uploads": 1,
+  "repositories": 0
+}
+```
+
+`marked` is the number that surprises people, and it is the one worth
+understanding before reading a report as a disappointment. A blob is not
+reclaimed the first time it is seen unreferenced — it is *marked*, and the mark
+has to stand for the whole grace period before the bytes go. So the first pass
+over a store that has never been purged reports thousands marked and nothing
+reclaimed. That is the clock starting, not a failure; the bytes come back a
+grace period later.
+
+`?dry-run=true` counts everything and writes nothing, marks included. It is the
+safe way to find out what a pass would do, and on a store with no marks yet it
+will honestly report nothing to reclaim.
+
+`GET` returns the last pass this process completed, or `null` before there has
+been one. Dry runs are not recorded — they did nothing to report.
+
+```json
+{"last": {"started_at": 1788696000, "…": "…"}}
+```
+
+The counts are in memory, so a restart empties them. What is durable is the
+store, which is the thing they describe.
 
 ### Tags
 

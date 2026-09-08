@@ -50,6 +50,7 @@ edge key that only needs to exist carries no value at all. Every type:
 | `T` | Tag | repo, tag | `TagRecord`: digest, tagged time | which digest a tag points at, sorted by tag name |
 | `G` | Manifest tag edge | repo, digest, tag | — | which tags point at a manifest, and so whether it is purgeable |
 | `L` | Blob | digest | `BlobRecord`: size | blob exists registry-wide, and its size |
+| `C` | Blob mark | digest | `BlobMark`: first seen unreferenced | purge's clock; retracted by anything that references the blob |
 | `R` | Blob reference edge | digest, repo, manifest | — | which manifests reference a blob |
 | `P` | Repo blob | repo, digest | `RepoBlobRecord`: size, added time | blob is in this repo; the grace clock purge reads |
 | `S` | Child parent edge | repo, child, parent | — | which indexes list a per-platform manifest |
@@ -123,6 +124,57 @@ background task folds the map into `A` keys every few seconds. Counters are kept
 at every scope that will be queried, per repo, per tag, and per manifest, so a
 repo total is a lookup rather than a scan across its manifests.
 `--no-pull-counts` stops recording; the API keeps serving what was recorded.
+
+## Purge
+
+Nothing in the request path reclaims bytes. A manifest delete retracts edges, a
+repository delete releases the name and sweeps its keys, and both leave the
+layers alone, because whether one repository was a layer's last user is a
+question about the whole store. A background pass answers it, on the same shape
+as the repository sweeper: an interval tick, a bounded resumable step per key
+range, and no state anywhere but the store.
+
+Five stages, in an order where each releases work for the next:
+
+1. **Untagged manifests**, if `--purge-untagged` is set. `M` minus `G`, less an
+   index's children (`S`), a referrer whose subject still exists, and anything
+   pushed inside `--purge-untagged-min-age`.
+2. **Stale memberships.** A `P` with no `R` edge in its own repository, older
+   than `--purge-grace`: a layer whose manifest never arrived.
+3. **Blobs.** A walk of `L`, asking `exists_prefix` over `R <digest>`.
+4. **Abandoned uploads.** `U` records untouched for `--upload-ttl`, and their
+   staging files.
+5. **Empty names.** A repository with no `M`, `P`, `H`, `J` or `A` beneath it
+   and no upload in flight - the never-finished `POST`, and nothing else. A
+   repository that ever had a tag keeps its name, because its history is still
+   queryable and the name is how you reach it.
+
+**Why blobs need a mark.** "Is this blob referenced" is one seek. "Does any
+repository still hold it" is not askable at all: `P` is keyed `<repo> <digest>`,
+so one blob's memberships are scattered across the range. A mount makes that
+gap visible - it adds `P` and no `R` - so a blob mounted a moment ago looks
+exactly like one nothing has wanted for a year. `C <digest>` closes it. The
+pass marks a blob the first time it finds it unreferenced, the mark has to
+stand for a whole grace period before the bytes go, and every path that creates
+a reference or a membership retracts the mark in the batch it was already
+writing. Retracting a membership retracts the mark too, which is what stops a
+manifest push from losing the layer it is halfway through referencing.
+
+**What it does not reclaim.** The archived manifest copies carry no metadata by
+design, so the pass never touches one - and never reclaims one either, even
+after the manifest is deleted. Finding those means walking `blobs/` rather than
+a key range, so it belongs with an orphan-file scrub, which does not exist yet.
+
+**Ordering, again.** The metadata batch commits and the file is removed after
+it - the mirror of the write path. The two failure modes are not symmetric: an
+`L` with no file is a pull that fails, while a file with no `L` is inert, and
+a re-push of the same digest makes it live again, the bytes being named by
+their content. Inert is not reclaimed, though - this pass finds its work by
+walking `L`, so a file whose record it has already retracted is one it can no
+longer see, and a crash between the two steps leaks those bytes until the
+orphan-file scrub exists. The one lock is a digest's, striped 256 ways, held
+from a blob's rename to its metadata commit and by the pass over its decision
+to reclaim, which is the only window where those two can interleave.
 
 ## Discovery API and UI
 

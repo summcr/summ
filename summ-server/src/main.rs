@@ -65,7 +65,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let backend = Backend::open(&args.data_dir, Engine::Rocks, args.registry_options())
         .unwrap_or_else(|message| {
             clap::Error::raw(clap::error::ErrorKind::Io, format!("{message}\n")).exit()
-        });
+        })
+        .with_purge(args.purge_config());
     // Started before the router, because the router needs the handle the pull
     // path records into. Disabled hands back a counter that discards, so
     // `--no-pull-counts` costs a branch rather than a second wiring.
@@ -74,6 +75,10 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Unconditional, and it has to be: the `D` range may hold work left by a
     // delete this process did not serve, and nothing else will ever finish it.
     backend.spawn_repo_sweeper();
+    // Conditional, unlike the sweeper: `--no-purge` stops the schedule. The
+    // endpoint still runs a pass, so nothing here decides whether bytes can
+    // ever be reclaimed - only whether the registry does it unprompted.
+    let purging = backend.spawn_purger();
     let auth = config.auth.clone();
     let state = AppState::with_counters(backend, config, counters);
     let app = router(state);
@@ -101,12 +106,40 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.no_pull_counts {
         println!("  pull counts   off (--no-pull-counts)");
     }
+    // Said either way, because both answers matter to whoever is watching the
+    // disk: one of them means the registry is reclaiming space on its own.
+    if purging {
+        let purge = args.purge_config();
+        println!(
+            "  purge         every {} after {} unreferenced{}",
+            span(purge.interval),
+            span(purge.grace),
+            if purge.untagged {
+                ", untagged manifests included"
+            } else {
+                ""
+            }
+        );
+    } else {
+        println!("  purge         off (--no-purge); POST /api/v1/purge still runs a pass");
+    }
     print_auth(&auth, generated, bound);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
+}
+
+/// A duration as the command line would have spelled it.
+fn span(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    for (unit, suffix) in [(86_400, 'd'), (3_600, 'h'), (60, 'm')] {
+        if secs >= unit && secs.is_multiple_of(unit) {
+            return format!("{}{suffix}", secs / unit);
+        }
+    }
+    format!("{secs}s")
 }
 
 /// The auth mode, what it means, and any key that had to be invented.

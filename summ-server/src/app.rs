@@ -294,6 +294,10 @@ pub fn api_route(path: &str) -> Result<ApiEndpoint, RouteError> {
                 reference: None,
             }),
         },
+        // The one route with no repository after it: purge is registry-wide by
+        // definition, since whether a layer is still wanted is a question about
+        // the whole store.
+        "purge" if remainder.is_empty() => Ok(ApiEndpoint::Purge),
         _ => Err(RouteError::NoMatch),
     }
 }

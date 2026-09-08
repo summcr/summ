@@ -23,7 +23,15 @@ lists a directory to answer a question. Three fan-out levels keep directories
 small at hundreds of millions of blobs.
 
 **`uploads/`** holds a layer while it is arriving. On completion the staging
-file is renamed into `blobs/`. Files left here belong to abandoned uploads.
+file is renamed into `blobs/`. Files left here belong to abandoned uploads, and
+purge removes them once a session has gone `--upload-ttl` without a chunk.
+
+**Space is reclaimed in the background, not by a delete.** Deleting a manifest
+or a repository is a metadata operation; the layers stay until a purge pass
+establishes that nothing references them anywhere and the grace period has
+passed. Expect the disk to come back a day after the delete rather than a
+second after it, and see [the purge endpoint](api.md#purge) to run a pass now
+or to ask what the last one did.
 
 ## One filesystem
 

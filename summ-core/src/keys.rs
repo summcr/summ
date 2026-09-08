@@ -26,6 +26,7 @@ pub const PREFIX_MANIFEST_BODY: u8 = b'B';
 pub const PREFIX_TAG: u8 = b'T';
 pub const PREFIX_MANIFEST_TAG: u8 = b'G';
 pub const PREFIX_BLOB: u8 = b'L';
+pub const PREFIX_BLOB_MARK: u8 = b'C';
 pub const PREFIX_BLOB_REF: u8 = b'R';
 pub const PREFIX_REPO_BLOB: u8 = b'P';
 pub const PREFIX_CHILD_PARENT: u8 = b'S';
@@ -156,6 +157,46 @@ pub fn blob(digest: &Digest) -> Vec<u8> {
     k
 }
 
+/// Scan prefix over every blob in the registry. Purge's collection pass walks
+/// this range; nothing on a request path does, because a blob is reached by
+/// digest and never by enumeration.
+pub fn blobs() -> Vec<u8> {
+    vec![PREFIX_BLOB]
+}
+
+/// `C <digest>` -> `BlobMark`. When purge first saw this blob with no `R` edge.
+///
+/// The mark is the clock the collection pass runs on. It exists because a
+/// mount adds `P` and no `R`: from the blob's side a layer mounted a moment
+/// ago is indistinguishable from one nothing has wanted for a year, and the
+/// mark is what turns being unreferenced from an instant into a duration.
+///
+/// It is a key rather than a field on `BlobRecord` so that retracting it is a
+/// blind delete. Every path that creates a reference or a membership retracts
+/// the mark in the batch it was already writing - no read, no decode, no
+/// re-encode, and no dependency on what the record currently holds. This is
+/// not about saving a read: the manifest push already reads `L`. It is about
+/// not having to write it back. As a field, clearing the mark would be a
+/// read-modify-write of a record the collection pass also writes, from a read
+/// taken under the repo lock rather than the digest lock - today `BlobRecord`
+/// is only `size`, so the blast radius is nil, but it stays nil only until
+/// that record grows a second field.
+///
+/// The mark also measures the right interval: how long the blob has actually
+/// gone unreferenced, rather than how long ago somebody pushed it, which is
+/// what `RepoBlobRecord::added_at` answers for the membership sweep. And it is
+/// additive, which saved a schema bump when purge landed - a store predating
+/// it has no marks and acquires them on the first pass.
+pub fn blob_mark(digest: &Digest) -> Vec<u8> {
+    let mut k = start(PREFIX_BLOB_MARK, digest.encoded_len());
+    digest.encode_into(&mut k);
+    k
+}
+
+pub fn blob_marks() -> Vec<u8> {
+    vec![PREFIX_BLOB_MARK]
+}
+
 /// `R <digest> <repo> <manifest>` -> (). One key per reference edge.
 pub fn blob_ref(digest: &Digest, repo: RepoId, manifest: &Digest) -> Vec<u8> {
     let mut k = start(
@@ -195,6 +236,13 @@ pub fn repo_blob(repo: RepoId, digest: &Digest) -> Vec<u8> {
 
 pub fn blobs_in_repo(repo: RepoId) -> Vec<u8> {
     start_repo(PREFIX_REPO_BLOB, repo, 0)
+}
+
+/// Scan prefix over every membership in the registry, in repository order.
+/// Purge's membership sweep walks this range; the repo id is in the key, so the
+/// sweep needs no names and no interner lookups.
+pub fn repo_blobs() -> Vec<u8> {
+    vec![PREFIX_REPO_BLOB]
 }
 
 // --- manifest graph ----------------------------------------------------
@@ -596,6 +644,7 @@ mod tests {
             PREFIX_TAG,
             PREFIX_MANIFEST_TAG,
             PREFIX_BLOB,
+            PREFIX_BLOB_MARK,
             PREFIX_BLOB_REF,
             PREFIX_REPO_BLOB,
             PREFIX_CHILD_PARENT,
@@ -625,6 +674,9 @@ mod tests {
         assert!(child_parent(7, &d(1), &d(2)).starts_with(&parents_of(7, &d(1))));
         assert!(referrer(7, &d(1), &d(2)).starts_with(&referrers_of(7, &d(1))));
         assert!(repo_by_name("alpine").starts_with(&repos_by_name()));
+        assert!(blob(&d(1)).starts_with(&blobs()));
+        assert!(blob_mark(&d(1)).starts_with(&blob_marks()));
+        assert!(repo_blob(7, &d(1)).starts_with(&repo_blobs()));
     }
 
     #[test]

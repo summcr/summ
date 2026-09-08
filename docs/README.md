@@ -11,7 +11,8 @@ It is a fit when you want a registry that:
 - starts in one command and is fast on the metadata lookups a `docker pull`
   actually waits on;
 - answers "what is being pulled" and "what did this tag point at" without
-  log parsing.
+  log parsing;
+- gives the disk space back on its own once nothing references a layer.
 
 | Document | What it covers |
 |---|---|

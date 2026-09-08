@@ -98,6 +98,9 @@ Linux the daemon shares your network namespace and the question does not arise.
 | `--auth-mode` | `SUMM_AUTH_MODE` | `open` | `open`, `public-pull`, or `private`. See [Authentication](auth.md). |
 | `--max-upload-bytes` | `SUMM_MAX_UPLOAD_BYTES` | 32 GiB | Largest layer accepted. `0` removes the limit. |
 | `--no-pull-counts` | `SUMM_NO_PULL_COUNTS` | off | Stop recording pull statistics. |
+| `--purge-grace` | `SUMM_PURGE_GRACE` | `24h` | How long content sits unreferenced before purge reclaims it. |
+| `--purge-untagged` | `SUMM_PURGE_UNTAGGED` | off | Also reclaim manifests no tag points at. |
+| `--no-purge` | `SUMM_NO_PURGE` | off | Stop the scheduled purge. `POST /api/v1/purge` still runs one. |
 
 Logging is controlled by `SUMM_LOG`, using `tracing` filter syntax. The default
 is `summ=info,summ_server=info,tower_http=info`.

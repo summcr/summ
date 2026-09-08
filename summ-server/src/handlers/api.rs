@@ -44,8 +44,8 @@ use super::{build, empty_with_length, method_not_allowed, ops_error, Ctx, Handle
 use crate::error::{ApiError, ErrorCode};
 use crate::reference::{parse_digest, valid_tag, Reference};
 use crate::seam::{
-    ManifestInfo, PullCountDay, PullCountScope, RepoDetail, RepoSummary, TagEventInfo, TagInfo,
-    Tally,
+    ManifestInfo, PullCountDay, PullCountScope, PurgeReport, RepoDetail, RepoSummary, TagEventInfo,
+    TagInfo, Tally,
 };
 
 /// Rows per page when `?n=` is absent.
@@ -93,9 +93,62 @@ pub enum ApiEndpoint {
         name: String,
         reference: Option<String>,
     },
+    /// `GET /api/v1/purge` for the last pass, `POST /api/v1/purge` to run one.
+    Purge,
 }
 
 // ---- wire shapes ---------------------------------------------------------
+
+/// What one purge pass did, or would do.
+///
+/// Counts and not lists: a pass over a large store may reclaim a great many
+/// things, and a response enumerating them would be the one unbounded body in
+/// this API.
+#[derive(Serialize)]
+struct PurgeBody {
+    /// Unix seconds the pass began.
+    started_at: u64,
+    duration_ms: u64,
+    /// `true` when the pass wrote nothing.
+    dry_run: bool,
+    /// Untagged manifests reclaimed. Zero unless the registry was started with
+    /// `--purge-untagged`.
+    manifests: u64,
+    /// Repository blob memberships retracted - uploads whose manifest never
+    /// arrived.
+    memberships: u64,
+    /// Blobs newly marked as unreferenced. A blob is reclaimed only after its
+    /// mark has stood for the grace period, so a first pass reports marks and
+    /// no bytes, and that is the clock starting rather than a failure.
+    marked: u64,
+    blobs: u64,
+    bytes: u64,
+    uploads: u64,
+    repositories: u64,
+}
+
+impl From<PurgeReport> for PurgeBody {
+    fn from(report: PurgeReport) -> Self {
+        PurgeBody {
+            started_at: report.started_at,
+            duration_ms: report.duration_ms,
+            dry_run: report.dry_run,
+            manifests: report.manifests,
+            memberships: report.memberships,
+            marked: report.marked,
+            blobs: report.blobs,
+            bytes: report.bytes,
+            uploads: report.uploads,
+            repositories: report.repositories,
+        }
+    }
+}
+
+/// The last pass, or `null` if this process has not finished one.
+#[derive(Serialize)]
+struct LastPurgeBody {
+    last: Option<PurgeBody>,
+}
 
 #[derive(Serialize)]
 struct TallyBody {
@@ -352,9 +405,19 @@ pub async fn handle(ctx: &Ctx, endpoint: ApiEndpoint) -> Handled {
             _ => Err(method_not_allowed("GET, HEAD")),
         };
     }
+    // The other mutating route, and it is a `POST` because it is not idempotent
+    // in the way a `PUT` promises: two passes do different work, and the second
+    // one usually does none.
+    if ctx.method == Method::POST {
+        return match endpoint {
+            ApiEndpoint::Purge => purge(ctx).await,
+            _ => Err(method_not_allowed("GET, HEAD")),
+        };
+    }
     if ctx.method != Method::GET && ctx.method != Method::HEAD {
         return Err(method_not_allowed(match endpoint {
             ApiEndpoint::Repository { .. } => "GET, HEAD, DELETE",
+            ApiEndpoint::Purge => "GET, HEAD, POST",
             _ => "GET, HEAD",
         }));
     }
@@ -369,7 +432,36 @@ pub async fn handle(ctx: &Ctx, endpoint: ApiEndpoint) -> Handled {
         ApiEndpoint::PullCounts { name, reference } => {
             pull_counts(ctx, &name, reference.as_deref()).await
         }
+        ApiEndpoint::Purge => last_purge(ctx).await,
     }
+}
+
+/// `POST /api/v1/purge` - run a pass now.
+///
+/// Synchronous, unlike the repository delete next door, and deliberately: a
+/// caller asking for this wants to know what it reclaimed, and the answer is
+/// the whole point of the request. A pass over a large store can take a while,
+/// which is what `?dry-run=true` is for - it counts and writes nothing.
+///
+/// Behind the write key, like every other mutation: the pass deletes content.
+async fn purge(ctx: &Ctx) -> Handled {
+    let dry_run = ctx.flag("dry-run");
+    let report = ctx.registry().purge(dry_run).await.map_err(ops_error)?;
+    json(ctx, &PurgeBody::from(report))
+}
+
+/// `GET /api/v1/purge` - what the last pass did.
+///
+/// `null` before this process has finished one, which is also what a registry
+/// started with `--no-purge` keeps answering until somebody `POST`s.
+async fn last_purge(ctx: &Ctx) -> Handled {
+    let last = ctx.registry().last_purge().await.map_err(ops_error)?;
+    json(
+        ctx,
+        &LastPurgeBody {
+            last: last.map(PurgeBody::from),
+        },
+    )
 }
 
 async fn repositories(ctx: &Ctx) -> Handled {

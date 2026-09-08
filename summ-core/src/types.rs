@@ -108,6 +108,20 @@ pub struct RepoBlobRecord {
     pub added_at: u64,
 }
 
+/// `C <digest>` - purge's mark: when the blob was first seen with no `R` edge.
+///
+/// Written by the collection pass and retracted by every path that creates a
+/// reference or a membership, so its presence means "unreferenced continuously
+/// since `seen_at`, as far as anything in this process knows". A blob is
+/// reclaimed only once a mark has stood for the whole grace period, which is
+/// what stops a mount - which writes `P` and no `R` - from looking like
+/// abandoned content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobMark {
+    /// Unix seconds, supplied by the caller like every other timestamp here.
+    pub seen_at: u64,
+}
+
 /// `T <repo> <tag>` - the tag's current target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagRecord {

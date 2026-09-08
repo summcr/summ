@@ -42,6 +42,14 @@ and see the pull-count grids and tag timelines beside the thing they describe.
 *A repository page: tag, manifest, blob and size counts, the thirty-day and
 last-24-hours pull grids, and the tags with the platforms each one covers.*
 
+**Space that comes back.** Deleting a manifest or a repository is a metadata
+operation, so the layers behind it stay until something establishes that no
+repository anywhere still wants them. That something ships in the binary and is
+on by default: a background purge that reclaims unreferenced layer bytes,
+uploads nobody finished, and names with nothing under them, with a grace period
+in front of it so it cannot race a push. `POST /api/v1/purge?dry-run=true` says
+what a pass would take before you let one run.
+
 **Metadata lookups are the product.** Four of the five serial steps in a cold
 `containerd` pull are metadata lookups, and their latencies add — so summ is
 built around a purpose-designed key schema over RocksDB rather than around the

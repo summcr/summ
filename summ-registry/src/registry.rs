@@ -156,6 +156,10 @@ impl Registry {
         Ok(self.interner.lookup(&*self.engine, name)?)
     }
 
+    pub(crate) fn interner(&self) -> &RepoInterner {
+        &self.interner
+    }
+
     pub(crate) fn require_repo(&self, name: &str) -> Result<RepoId> {
         self.lookup_repo(name)?
             .ok_or_else(|| RegistryError::NameUnknown {
@@ -258,6 +262,12 @@ impl Registry {
         let repo_id = self.intern_repo(repo)?;
         let mut batch = WriteBatch::new();
         batch.put(keys::blob(digest), encode(&BlobRecord { size })?);
+        // Purge's mark, retracted in the batch that gives the blob a reason to
+        // exist again. A mount writes `P` and no `R`, so without this line the
+        // blob a client has just mounted is indistinguishable to the collection
+        // pass from one nothing has referenced for a year. Deleting a key that
+        // is not there costs nothing, and the common case is that it is not.
+        batch.delete(keys::blob_mark(digest));
         // `added_at` is left alone if the blob is already a member: it is the
         // grace clock for reclaiming an unreferenced blob, and re-uploading
         // must not restart it indefinitely.
@@ -587,6 +597,9 @@ impl Registry {
                 );
             }
             batch.set(keys::blob_ref(&desc.digest, repo, manifest_digest));
+            // The edge is a reason to keep the bytes, so the mark that said
+            // there was none goes with it, in the same batch.
+            batch.delete(keys::blob_mark(&desc.digest));
         }
         Ok(())
     }

@@ -129,6 +129,23 @@ async function apiDelete(path) {
 }
 
 /**
+ * Ask for a purge pass.
+ *
+ * The other request here that changes anything, and unlike the delete it
+ * answers with what it did - which is the whole reason anyone presses it.
+ */
+async function apiPost(path, params) {
+  const url = new URL(path, location.origin);
+  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v);
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) throw await failed(response);
+  return response.json();
+}
+
+/**
  * Unpack a failure. The server answers in the spec's error envelope on every
  * path, including these, so there is exactly one shape to read.
  */
@@ -280,14 +297,18 @@ function repositoriesPage(query) {
     q ? empty('No repository name contains that.', q) : empty('This registry is empty.', 'docker push <host>/<name>:<tag>'),
   );
 
-  render(
+  const page = [
     el('h1', { text: 'Repositories' }),
     el('p', { class: 'subtitle' }, q
       ? ['Names containing ', el('span', { class: 'mono', text: q }), ', in name order.']
       : ['Every repository in this registry, in name order.']),
     el('div', { class: 'toolbar' }, [el('div', { class: 'search' }, [input])]),
     list,
-  );
+  ];
+  // Not under a search: the panel is about the whole registry, and a filtered
+  // list is the one view where that is not what the page is about.
+  if (!q) page.push(purgeSection());
+  render(...page);
 
   if (query.get('focus') !== null || q) {
     input.focus();
@@ -458,6 +479,90 @@ function deleteSection(name) {
   };
 
   collapsed();
+  return section;
+}
+
+/**
+ * Purge: what the last pass reclaimed, and a button to run one now.
+ *
+ * On the catalogue and not on a repository page, because purge is a
+ * registry-wide question by construction - a layer is shared, so whether
+ * anything still wants it is never answerable under one name.
+ *
+ * The numbers are this process's last pass, so a restart empties them. That is
+ * what the server has, and inventing a durable-looking history for it here
+ * would be the UI claiming more than the API does.
+ */
+function purgeSection() {
+  const section = el('section', { class: 'maintenance' });
+  const status = el('p', { class: 'danger-status' });
+
+  const summarise = (report) => {
+    const [size, unit] = bytes(report.bytes);
+    const bits = [`${nf.format(report.blobs)} blobs`, `${size} ${unit}`];
+    if (report.manifests) bits.push(`${nf.format(report.manifests)} manifests`);
+    if (report.uploads) bits.push(`${nf.format(report.uploads)} abandoned uploads`);
+    if (report.repositories) bits.push(`${nf.format(report.repositories)} empty names`);
+    // Marks are not reclamation - they are the clock starting - so they are
+    // said last and said differently, or a first pass reads like a failure.
+    if (report.marked) bits.push(`${nf.format(report.marked)} newly marked`);
+    return bits.join(', ');
+  };
+
+  const show = (report, verb) => {
+    status.classList.remove('failed');
+    if (!report) {
+      status.textContent = 'No pass has finished in this process yet.';
+      return;
+    }
+    const ago = when(report.started_at);
+    status.textContent = `${verb}: ${summarise(report)}`
+      + ` — ${ago || 'just now'}, in ${nf.format(report.duration_ms)} ms.`;
+  };
+
+  const press = async (dry) => {
+    for (const button of [now, dryRun]) button.disabled = true;
+    status.classList.remove('failed');
+    status.textContent = dry ? 'Counting…' : 'Purging…';
+    try {
+      const report = await apiPost('/api/v1/purge', dry ? { 'dry-run': 'true' } : {});
+      show(report, dry ? 'Would reclaim' : 'Reclaimed');
+    } catch (error) {
+      status.textContent = error.message;
+      status.classList.add('failed');
+    } finally {
+      for (const button of [now, dryRun]) button.disabled = false;
+    }
+  };
+
+  const now = el('button', {
+    class: 'ghost-button',
+    type: 'button',
+    onclick: () => press(false),
+  }, ['Purge now']);
+  const dryRun = el('button', {
+    class: 'ghost-button',
+    type: 'button',
+    onclick: () => press(true),
+  }, ['Dry run']);
+
+  section.replaceChildren(
+    el('h2', { class: 'section', text: 'Purge' }),
+    el('p', {
+      class: 'danger-note',
+      text: 'Reclaims the layer bytes a delete leaves behind, along with '
+        + 'abandoned uploads and names with nothing under them. It runs on a '
+        + 'schedule; these buttons are the same pass, now.',
+    }),
+    el('div', { class: 'danger-form' }, [now, dryRun]),
+    status,
+  );
+
+  // Best-effort: a registry that requires a key for reads answers 401 here,
+  // and a panel that shouted about it would be shouting on every load.
+  api('/api/v1/purge')
+    .then((body) => show(body.last, 'Last pass reclaimed'))
+    .catch(() => { status.textContent = ''; });
   return section;
 }
 
