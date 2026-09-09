@@ -126,7 +126,7 @@ alongside it.
 ### Prebuilt binary
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+curl -fsSL https://summcr.com/install.sh | sh
 ```
 
 That reads `uname`, downloads the matching build, checks it against the
@@ -134,7 +134,12 @@ published SHA-256 and leaves a single `summ` in the current directory. It does
 nothing else — no PATH edits, no service files, no sudo. `--dir /usr/local/bin`
 puts it somewhere else, `--version v0.1.0` pins a release, and
 `scripts/install.sh` in this repository is the whole of it if you would rather
-read it first.
+read it first — it is the file that URL serves. To fetch it from GitHub instead
+of the domain:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+```
 
 Or take the tarball for your platform directly — each carries `summ`, `LICENSE`
 and `NOTICE`, with a `.sha256` beside it:

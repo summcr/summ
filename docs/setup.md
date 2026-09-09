@@ -8,13 +8,20 @@ the right one from `uname`, verifies its checksum and drops `summ` in the
 current directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+curl -fsSL https://summcr.com/install.sh | sh
 ```
 
 `--dir <path>` installs elsewhere, `--version <tag>` pins a release, and both
 have environment equivalents (`SUMM_INSTALL_DIR`, `SUMM_VERSION`). It is
 `scripts/install.sh` in the repository, and it does nothing a one-liner would
 not lead you to expect — no PATH edits, no service files, no sudo.
+
+The domain serves that file and nothing else; the same script comes from GitHub
+if you would rather not depend on it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+```
 
 The asset names carry no version, so taking one directly is a line that never
 changes either:

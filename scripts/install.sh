@@ -2,7 +2,7 @@
 #
 # install.sh — download the summ binary for this machine.
 #
-#   curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
+#   curl -fsSL https://summcr.com/install.sh | sh
 #   ./scripts/install.sh --dir /usr/local/bin --version v0.1.0
 #
 # It resolves uname to one of the four published targets, downloads that
@@ -18,6 +18,14 @@
 #   SUMM_VERSION       release tag to install    (default: the latest release)
 #
 # Requires: curl or wget, tar, and sha256sum or shasum.
+#
+# This file is served byte-for-byte at https://summcr.com/install.sh, from a
+# copy in the summcr-website repository. This one is the source; that one is a
+# copy, and install-drift.yml there fails when the two disagree. The GitHub
+# path still works and is documented as the fallback for anyone who would
+# rather not pipe a domain into a shell:
+#
+#   curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
 
 set -eu
 
