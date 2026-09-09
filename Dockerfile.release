@@ -14,11 +14,11 @@
 #
 #   docker buildx build -f Dockerfile.release . \
 #     --platform linux/amd64,linux/arm64 \
-#     --build-arg SUMM_VERSION=v0.1.0-rc.1 \
-#     -t summcr/summ:0.1.0-rc.1 --push
+#     --build-arg SUMM_VERSION=v0.1.0 \
+#     -t summcr/summ:0.1.0 -t summcr/summ:latest --push
 
 ARG DEBIAN_VERSION=bookworm
-ARG SUMM_VERSION=v0.1.0-rc.1
+ARG SUMM_VERSION=v0.1.0
 
 # ----------------------------------------------------------------- download --
 
