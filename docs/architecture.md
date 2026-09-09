@@ -46,10 +46,10 @@ edge key that only needs to exist carries no value at all. Every type:
 | Prefix | Entity                 | Key                                                                    | Value                                                                                                                           | Answers                                                        |
 |--------|------------------------|------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
 | `M`    | Manifest               | repo, m_digest                                                         | `ManifestRecord`: media type, own size, layer total, platform, layers, children, subject, artifact type, annotations, push time | what this manifest is, without decoding its JSON               |
-| `B`    | Manifest body          | repo, m_digest                                                         | the manifest JSON, zstd-compressed                                                                                              | the exact bytes a manifest `GET` returns                       |
+| `Z`    | Manifest body          | repo, m_digest                                                         | the manifest JSON, zstd-compressed                                                                                              | the exact bytes a manifest `GET` returns                       |
 | `T`    | Tag                    | repo, tag                                                              | `TagRecord`: digest, tagged time                                                                                                | which digest a tag points at, sorted by tag name               |
 | `G`    | Manifest tag edge      | repo, m_digest, tag                                                    | —                                                                                                                               | which tags point at a manifest, and so whether it is purgeable |
-| `L`    | Blob                   | b_digest                                                               | `BlobRecord`: size                                                                                                              | blob exists registry-wide, and its size                        |
+| `B`    | Blob                   | b_digest                                                               | `BlobRecord`: size                                                                                                              | blob exists registry-wide, and its size                        |
 | `C`    | Blob mark              | b_digest                                                               | `BlobMark`: first seen unreferenced                                                                                             | purge's clock; retracted by anything that references the blob  |
 | `R`    | Blob reference edge    | b_digest, repo, m_digest                                               | —                                                                                                                               | which manifests reference a blob                               |
 | `P`    | Repo blob              | repo, b_digest                                                         | `RepoBlobRecord`: size, added time                                                                                              | blob is in this repo; the grace clock purge reads              |
@@ -66,7 +66,9 @@ edge key that only needs to exist carries no value at all. Every type:
 
 `m_digest` is a manifest's digest and `b_digest` a blob's. The two encode
 identically, so nothing but the key's type prefix says which kind it holds, and
-a range that mixed them up would answer a manifest lookup with a layer.
+a range that mixed them up would answer a manifest lookup with a layer. The
+letters are mnemonic where they can be: `B` is the blob record, and the
+manifest body is `Z` because it is the one range stored compressed.
 Timestamps in `H` and `J` keys are stored with the time bit-flipped, written
 `time_asc` above, so the keys ascend as the instant they describe recedes and a
 forward scan arrives newest first. `A` keys carry a writing-node shard so two
@@ -145,7 +147,7 @@ Five stages, in an order where each releases work for the next:
    pushed inside `--purge-untagged-min-age`.
 2. **Stale memberships.** A `P` with no `R` edge in its own repository, older
    than `--purge-grace`: a layer whose manifest never arrived.
-3. **Blobs.** A walk of `L`, asking `exists_prefix` over `R <digest>`.
+3. **Blobs.** A walk of `B`, asking `exists_prefix` over `R <digest>`.
 4. **Abandoned uploads.** `U` records untouched for `--upload-ttl`, and their
    staging files.
 5. **Empty names.** A repository with no `M`, `P`, `H`, `J` or `A` beneath it
@@ -171,10 +173,10 @@ a key range, so it belongs with an orphan-file scrub, which does not exist yet.
 
 **Ordering, again.** The metadata batch commits and the file is removed after
 it - the mirror of the write path. The two failure modes are not symmetric: an
-`L` with no file is a pull that fails, while a file with no `L` is inert, and
+`B` with no file is a pull that fails, while a file with no `B` is inert, and
 a re-push of the same digest makes it live again, the bytes being named by
 their content. Inert is not reclaimed, though - this pass finds its work by
-walking `L`, so a file whose record it has already retracted is one it can no
+walking `B`, so a file whose record it has already retracted is one it can no
 longer see, and a crash between the two steps leaks those bytes until the
 orphan-file scrub exists. The one lock is a digest's, striped 256 ways, held
 from a blob's rename to its metadata commit and by the pass over its decision

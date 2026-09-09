@@ -3,7 +3,7 @@
 //!
 //! This layer sits between the HTTP handlers and the metadata engine. It does
 //! no HTTP and it never touches blob bytes - a manifest body is metadata (it
-//! lives under `B`), a layer is not. What it owns is the translation from a
+//! lives under `Z`), a layer is not. What it owns is the translation from a
 //! spec operation to a set of key writes, and the typed results the handlers
 //! turn into responses.
 //!

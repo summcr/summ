@@ -68,7 +68,7 @@ fn summ_prefix_len(key: &[u8]) -> Option<usize> {
             SCOPE_TAG | SCOPE_REPO => Some(6),
             _ => None,
         },
-        // Repo-scoped scans: `M|B|T|P|H|J <repo:4>`.
+        // Repo-scoped scans: `M|Z|T|P|H|J <repo:4>`.
         //
         // `J <repo:4> <digest> ...` could in principle group through its digest
         // the way `G`/`S`/`F` do, but it is kept alongside `H` at the repo id:
@@ -81,7 +81,7 @@ fn summ_prefix_len(key: &[u8]) -> Option<usize> {
         | PREFIX_REPO_BLOB
         | PREFIX_TAG_HISTORY
         | PREFIX_MANIFEST_TAG_HISTORY => Some(5),
-        // `L`, `U`, `n`, `i`: a one-byte group is worthless to a bloom filter,
+        // `B`, `U`, `n`, `i`: a one-byte group is worthless to a bloom filter,
         // so they stay out of the domain and rely on the whole-key filter.
         _ => None,
     }
@@ -103,7 +103,7 @@ fn summ_in_domain(key: &[u8]) -> bool {
 /// in every SST's table properties and would otherwise trust filters built
 /// under the old rules.
 fn summ_prefix_extractor() -> SliceTransform {
-    SliceTransform::create("summ.prefix.v2", summ_transform, Some(summ_in_domain))
+    SliceTransform::create("summ.prefix.v3", summ_transform, Some(summ_in_domain))
 }
 
 /// Smallest key strictly greater than every key beginning with `prefix`.

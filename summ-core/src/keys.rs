@@ -2,7 +2,9 @@
 //!
 //! Every key begins with a single-byte prefix; uppercase prefixes hold registry
 //! data, lowercase hold internal bookkeeping - the repo-name interner and the
-//! schema version. Repo names are interned to a
+//! schema version. The letters are mnemonic where the alphabet allows: `B` is
+//! the blob record, and the manifest body is `Z` because it is the one range
+//! stored compressed. Repo names are interned to a
 //! `u32` so a long name is not repeated in every key, and digests are stored raw
 //! rather than as hex, halving their size.
 //!
@@ -22,10 +24,10 @@ use crate::time::Timestamp;
 use crate::types::RepoId;
 
 pub const PREFIX_MANIFEST: u8 = b'M';
-pub const PREFIX_MANIFEST_BODY: u8 = b'B';
+pub const PREFIX_MANIFEST_BODY: u8 = b'Z';
 pub const PREFIX_TAG: u8 = b'T';
 pub const PREFIX_MANIFEST_TAG: u8 = b'G';
-pub const PREFIX_BLOB: u8 = b'L';
+pub const PREFIX_BLOB: u8 = b'B';
 pub const PREFIX_BLOB_MARK: u8 = b'C';
 pub const PREFIX_BLOB_REF: u8 = b'R';
 pub const PREFIX_REPO_BLOB: u8 = b'P';
@@ -78,7 +80,7 @@ pub fn manifest(repo: RepoId, digest: &Digest) -> Vec<u8> {
     k
 }
 
-/// `B <repo> <digest>` -> zstd-compressed manifest JSON
+/// `Z <repo> <digest>` -> zstd-compressed manifest JSON
 pub fn manifest_body(repo: RepoId, digest: &Digest) -> Vec<u8> {
     let mut k = start_repo(PREFIX_MANIFEST_BODY, repo, digest.encoded_len());
     digest.encode_into(&mut k);
@@ -149,7 +151,7 @@ pub fn parse_tag_suffix(key: &[u8]) -> Option<&str> {
 
 // --- blobs -------------------------------------------------------------
 
-/// `L <digest>` -> `BlobRecord`. Global, not repo-scoped: blob content is
+/// `B <digest>` -> `BlobRecord`. Global, not repo-scoped: blob content is
 /// deduplicated across the whole registry.
 pub fn blob(digest: &Digest) -> Vec<u8> {
     let mut k = start(PREFIX_BLOB, digest.encoded_len());
@@ -175,7 +177,7 @@ pub fn blobs() -> Vec<u8> {
 /// blind delete. Every path that creates a reference or a membership retracts
 /// the mark in the batch it was already writing - no read, no decode, no
 /// re-encode, and no dependency on what the record currently holds. This is
-/// not about saving a read: the manifest push already reads `L`. It is about
+/// not about saving a read: the manifest push already reads `B`. It is about
 /// not having to write it back. As a field, clearing the mark would be a
 /// read-modify-write of a record the collection pass also writes, from a read
 /// taken under the repo lock rather than the digest lock - today `BlobRecord`

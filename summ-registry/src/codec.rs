@@ -20,7 +20,7 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
     postcard::from_bytes(bytes).map_err(|_| RegistryError::corrupt(what))
 }
 
-/// Compress a manifest body for the `B` range.
+/// Compress a manifest body for the `Z` range.
 ///
 /// The digest is over the bytes as pushed, so this must round-trip exactly -
 /// no reserialisation of the parsed form, no whitespace normalisation. That is

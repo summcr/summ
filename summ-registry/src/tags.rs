@@ -302,7 +302,7 @@ impl Registry {
     /// The `artifactType` a referrers response must report is not
     /// `ManifestRecord::artifact_type`: for an image manifest with no explicit
     /// `artifactType` it is the *config descriptor's* media type, which the
-    /// record does not hold. Re-reading `B` recovers it, and that read is taken
+    /// record does not hold. Re-reading `Z` recovers it, and that read is taken
     /// only when the tag actually names an artifact subject - never on an
     /// ordinary tag write.
     fn tag_target(

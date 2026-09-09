@@ -265,8 +265,8 @@ impl RepoLocks {
 /// Serialises a blob's commit against purge's collection of it.
 ///
 /// The window it closes: purge decides a blob is unreferenced, and a commit of
-/// the same digest renames bytes into place and writes `L` before the file is
-/// removed. The result would be an `L` record naming a file that is not there,
+/// the same digest renames bytes into place and writes `B` before the file is
+/// removed. The result would be a `B` record naming a file that is not there,
 /// which is the one failure this registry treats as corruption rather than as
 /// garbage.
 ///
@@ -786,7 +786,7 @@ impl Registry for Backend {
     // ---- blobs -----------------------------------------------------------
 
     async fn stat_blob(&self, name: &str, digest: &Digest) -> OpsResult<u64> {
-        // Repository membership first, and always: `L` alone says the bytes
+        // Repository membership first, and always: `B` alone says the bytes
         // exist somewhere in the registry, which is not permission to serve
         // them under this name.
         let record = self
@@ -812,7 +812,7 @@ impl Registry for Backend {
         }
 
         let blob = self.blobs.open_blob(digest).await.map_err(storage_error)?;
-        // The file's own length, not `L`'s: the range arithmetic has to agree
+        // The file's own length, not `B`'s: the range arithmetic has to agree
         // with the descriptor the read is actually issued against, and the
         // store is content-addressed so the two can only differ if something
         // is already wrong.
@@ -886,7 +886,7 @@ impl Registry for Backend {
                     ops.blob_metadata(&digest)?.map(|r| r.size)
                 }
                 // Anonymous mount, which the spec permits: the question is
-                // only whether the content exists at all, and `L` answers it
+                // only whether the content exists at all, and `B` answers it
                 // in one lookup.
                 None => ops.blob_metadata(&digest)?.map(|r| r.size),
             };
@@ -1033,7 +1033,7 @@ impl Registry for Backend {
         // transfer would serialise every push that collided on its shard,
         // where this one is held for an fsync and a batch. Without it purge
         // could reclaim a blob whose bytes this commit has just replaced,
-        // leaving an `L` record naming a file that is gone.
+        // leaving a `B` record naming a file that is gone.
         let _bytes = self.blob_locks.of(digest).lock().await;
 
         // Commit fsyncs the bytes *and* the containing directory before it
@@ -1050,7 +1050,7 @@ impl Registry for Backend {
         let name = name.to_string();
         let digest = *digest;
         self.write(move |ops| {
-            // One batch: the blob's `L`/`P` records and the retirement of the
+            // One batch: the blob's `B`/`P` records and the retirement of the
             // session. Two batches would leave a window in which the blob is
             // servable but its upload could still be resumed onto.
             let planned = ops.plan_blob_commit(&name, &digest, size, now)?;
@@ -1814,9 +1814,9 @@ impl Backend {
                 let Some(size) = blocking(move || ops.collect_blob(&digest, cutoff)).await? else {
                     continue;
                 };
-                // Metadata first, bytes second. An `L` record whose file is
-                // gone is a pull that fails; a file whose `L` record is gone is
-                // inert, but nothing reclaims it either - the scan walks `L`,
+                // Metadata first, bytes second. A `B` record whose file is
+                // gone is a pull that fails; a file whose `B` record is gone is
+                // inert, but nothing reclaims it either - the scan walks `B`,
                 // so a crash between these two steps leaks the bytes until the
                 // orphan-file scrub exists.
                 self.blobs
@@ -2001,7 +2001,7 @@ impl Backend {
     /// digest.
     ///
     /// The first mitigation for Risk 0: manifest bytes otherwise live only
-    /// under `B <repo> <digest>`, so a lost metadata store leaves a disk of
+    /// under `Z <repo> <digest>`, so a lost metadata store leaves a disk of
     /// blobs that nothing on it can identify - no way to tell a config from a
     /// layer, no way to tell which layers belong together, and no way to name
     /// any of it. A manifest is content-addressed by construction, so the copy
@@ -2011,7 +2011,7 @@ impl Backend {
     ///
     /// Four decisions, all of which the next change here has to keep:
     ///
-    /// - **No `L` or `P` record, deliberately.** Those are what make bytes
+    /// - **No `B` or `P` record, deliberately.** Those are what make bytes
     ///   servable through `GET /v2/<name>/blobs/<digest>`, and a manifest is
     ///   not a blob of its repository: publishing one as though it were is a
     ///   client-visible change nothing asked for, and it would put manifest
@@ -2025,7 +2025,7 @@ impl Backend {
     ///   global, so a manifest deleted from one repository may still be named
     ///   by another's `M`; deciding that nothing names it is purge's job and
     ///   needs the whole sweep to decide it.
-    /// - **A failure here fails the push.** The copy is redundant - `B` is
+    /// - **A failure here fails the push.** The copy is redundant - `Z` is
     ///   still the read path - so this cannot corrupt anything, and a warning
     ///   would be tempting. But the state it would leave is metadata with no
     ///   copy, silently, which is the exact state the mitigation exists to

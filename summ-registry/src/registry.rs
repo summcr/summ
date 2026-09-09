@@ -193,9 +193,9 @@ impl Registry {
     ///
     /// A blob is servable under a repo only if some manifest in that repo
     /// references it (`R <digest> <repo>` is non-empty) or it was uploaded
-    /// there (`P <repo> <digest>` exists). Existence of `L` alone is *not*
+    /// there (`P <repo> <digest>` exists). Existence of `B` alone is *not*
     /// enough and must never be used: blob content is deduplicated
-    /// registry-wide, so serving on `L` would let any repo name pull any
+    /// registry-wide, so serving on `B` would let any repo name pull any
     /// private layer in the store by digest.
     ///
     /// The same predicate is what a push validates its layers against, which is
@@ -228,7 +228,7 @@ impl Registry {
         self.blob_record(digest)
     }
 
-    /// Record a blob as present in a repository: `L` for the content and `P`
+    /// Record a blob as present in a repository: `B` for the content and `P`
     /// for the membership.
     ///
     /// Called once the bytes have landed and been fsynced, never before - a
@@ -286,10 +286,10 @@ impl Registry {
         Ok(Planned { outcome: (), batch })
     }
 
-    /// The global `L` record, ignoring repository membership entirely.
+    /// The global `B` record, ignoring repository membership entirely.
     ///
     /// **Never gate serving on this.** Blob content is deduplicated
-    /// registry-wide, so `L` says only that the bytes exist somewhere; using it
+    /// registry-wide, so `B` says only that the bytes exist somewhere; using it
     /// to answer a `GET` would let any repository name pull any layer in the
     /// store by digest. [`Registry::servable_blob`] is the predicate for that,
     /// and it is not this one.
@@ -336,7 +336,7 @@ impl Registry {
     /// body is never touched. This matters more than it looks: four of the five
     /// serial steps in a cold containerd pull are metadata lookups and their
     /// latencies add, so implementing this as "get the manifest and throw the
-    /// body away" would put a `B` read and a zstd decompression on the critical
+    /// body away" would put a `Z` read and a zstd decompression on the critical
     /// path of every pull for nothing.
     pub fn head_manifest(&self, repo: &str, reference: &Reference) -> Result<Option<ManifestHead>> {
         let repo_id = self.require_repo(repo)?;
@@ -383,7 +383,7 @@ impl Registry {
         let Some(record) = self.manifest_record(repo, digest)? else {
             return Ok(None);
         };
-        // `M` without `B` is corruption, not a miss: they are written in one
+        // `M` without `Z` is corruption, not a miss: they are written in one
         // batch and deleted in one batch.
         let stored = self
             .engine
@@ -406,7 +406,7 @@ impl Registry {
 
     /// Build the batch a manifest push commits.
     ///
-    /// One batch touches `M`, `B`, `L`/`R`/`P` for every referenced blob, `S`
+    /// One batch touches `M`, `Z`, `B`/`R`/`P` for every referenced blob, `S`
     /// for an index's children, `F` for a subject, and - when the reference is
     /// a tag - `T`, `G` and the `H`/`J` history pair. Atomicity across all of
     /// them is the point: a half-applied push is a manifest that resolves but
@@ -541,7 +541,7 @@ impl Registry {
         })
     }
 
-    /// `L`, `P` and `R` for every blob the manifest references.
+    /// `B`, `P` and `R` for every blob the manifest references.
     fn stage_blobs(
         &self,
         batch: &mut WriteBatch,
@@ -557,7 +557,7 @@ impl Registry {
 
             // A foreign layer names its content's real home in `urls`, and the
             // spec does not expect a registry to hold it. Requiring the blob
-            // would reject every Windows base image; recording `L`, `P` or `R`
+            // would reject every Windows base image; recording `B`, `P` or `R`
             // for it would be worse - those keys are what make a blob servable,
             // so the edges would advertise bytes that are not on disk and turn
             // a pull into a 500. Absent and foreign means no validation and no
@@ -574,7 +574,7 @@ impl Registry {
                 });
             }
 
-            // A present `L` was written from the bytes that actually arrived,
+            // A present `B` was written from the bytes that actually arrived,
             // so it outranks the descriptor, which is client-supplied and may
             // simply be wrong.
             let size = known.map_or(desc.size, |r| r.size);

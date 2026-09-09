@@ -62,7 +62,7 @@ impl Registry {
 
     /// Remove a manifest and every edge that named it.
     ///
-    /// `M`, `B`, one `R` per referenced blob, the `S` edges in both directions,
+    /// `M`, `Z`, one `R` per referenced blob, the `S` edges in both directions,
     /// the `F` edge to its subject, and every `T`/`G` pair pointing at it.
     /// After this the manifest is purgeable: nothing is left that would make it
     /// look referenced.
@@ -381,7 +381,7 @@ impl Registry {
     /// `<type> <repo> ...`, which is what the key schema buys here. Only `R`
     /// is not, and [`Registry::sweep_repo_refs`] must have run first.
     ///
-    /// What is deliberately left: `L` and the blob bytes. Both are global and
+    /// What is deliberately left: `B` and the blob bytes. Both are global and
     /// shared, so whether this repository was the last user of a layer is
     /// purge's question, not this one's.
     pub fn finish_repo_sweep(&self, repo: RepoId) -> Result<()> {

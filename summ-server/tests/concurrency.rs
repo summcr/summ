@@ -5,7 +5,7 @@
 //! comes back while somebody else is pushing. Every read path in summ is a
 //! sequence of independent `get`s - `MetaEngine` has no snapshot, by design -
 //! so `GET /v2/<name>/manifests/<tag>` is three separate lookups (`T`, then
-//! `M`, then `B`) with a writer free to commit between any two of them. That is
+//! `M`, then `Z`) with a writer free to commit between any two of them. That is
 //! not a bug in itself; it is the property whose consequences have to be
 //! pinned.
 //!
@@ -383,7 +383,7 @@ fn report(name: &str, findings: Findings) {
 ///   check would pass while a stale read went unnoticed.
 ///
 /// `HEAD` is checked against the same sequence rather than separately, because
-/// it walks a *different* key set - `T` then `M`, with no `B` read - so a
+/// it walks a *different* key set - `T` then `M`, with no `Z` read - so a
 /// divergence between the two is exactly the kind of thing only a mixed stream
 /// finds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -708,7 +708,7 @@ async fn a_blob_is_never_visible_as_a_partial_body() {
 /// it is reachable with no race at all. What the test asserts instead is that
 /// neither operation can be made to fail in a way that is nobody's contract -
 /// no `500` from either side, and a manifest that answered `201` is still
-/// readable byte-exact afterwards, never the `M`-without-`B` corruption path.
+/// readable byte-exact afterwards, never the `M`-without-`Z` corruption path.
 ///
 /// The width of the window is reported rather than asserted. It is a real
 /// number about a known-open item, and a number that varies with the machine is
@@ -813,7 +813,7 @@ async fn a_push_racing_a_blob_delete_never_corrupts_the_store() {
 
         if put.status == StatusCode::CREATED {
             // Whatever the interleaving decided, the manifest it committed has
-            // to read back - `M` and `B` are written in one batch, so a miss
+            // to read back - `M` and `Z` are written in one batch, so a miss
             // here is a torn read and a 500 is the corruption path.
             let read = h
                 .get(&format!("/v2/race/validate/manifests/{manifest_digest}"))
@@ -868,9 +868,9 @@ async fn a_push_racing_a_blob_delete_never_corrupts_the_store() {
 /// the reason this is a scenario rather than a unit test.
 ///
 /// The first is inside one read. `get_manifest_by_tag` is `T`, then `M`, then
-/// `B`, three independent lookups; the sweep drops all three ranges in one
+/// `Z`, three independent lookups; the sweep drops all three ranges in one
 /// batch, but a reader can be *between* two of its own lookups when that batch
-/// lands. Holding an `M` whose `B` has gone is the one state `stored_manifest`
+/// lands. Holding an `M` whose `Z` has gone is the one state `stored_manifest`
 /// calls corruption rather than a miss, and corruption is a `500`. If that
 /// window is reachable, this is the test that finds it.
 ///
@@ -1398,8 +1398,8 @@ async fn concurrent_pulls_are_counted_exactly_once() {
 /// registry still has whatever it says it has.
 ///
 /// **What this does and does not establish.** The failure it describes is real:
-/// a commit renames bytes into place and then writes `L`, so a collection
-/// landing between the two leaves an `L` record naming a file that is gone -
+/// a commit renames bytes into place and then writes `B`, so a collection
+/// landing between the two leaves a `B` record naming a file that is gone -
 /// the one failure this registry treats as corruption rather than as garbage,
 /// because it surfaces as a broken pull days later to somebody else. That is
 /// what `BlobLocks` closes. But the gap it closes is on the order of a hundred
@@ -1526,7 +1526,7 @@ async fn a_commit_racing_a_collection_is_never_seen_half_done() {
 
     // The assertion the readers structurally cannot make, taken at rest.
     //
-    // A torn commit leaves an `L` record whose file is gone, and that state is
+    // A torn commit leaves a `B` record whose file is gone, and that state is
     // *stable*: nothing rewrites it, and every later pull of a manifest naming
     // the blob fails. It is invisible over HTTP while the run is going, because
     // a blob whose file has been reclaimed answers `404` exactly like one that

@@ -29,7 +29,7 @@ const DOCKER_MANIFEST: &str = "application/vnd.docker.distribution.manifest.v2+j
 pub struct BlobDesc {
     pub digest: Digest,
     /// Declared size. Only trusted when the blob is not already known; a
-    /// present `L` record is authoritative, because it was written from the
+    /// present `B` record is authoritative, because it was written from the
     /// bytes that actually arrived.
     pub size: u64,
     /// The descriptor carries `urls`, so the content lives somewhere else and

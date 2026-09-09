@@ -1,7 +1,7 @@
 //! The schema version marker and the migration seam.
 //!
 //! A lost or unreadable metadata store is a dead registry: manifest bytes live
-//! only under `B` and tags only under `T`, so there is nothing to rebuild from.
+//! only under `Z` and tags only under `T`, so there is nothing to rebuild from.
 //! The cheapest insurance against the *silent* half of that failure is a version
 //! marker, and it exists now rather than when it is first needed because
 //! retrofitting one onto a populated store means guessing what that store
@@ -30,9 +30,12 @@ pub struct Migration {
 
 /// The ordered set of steps this build knows how to apply.
 ///
-/// Empty today - there has only ever been one schema - but the seam is here
-/// because the analytics records are the first that are likely to gain fields,
-/// and by then the store will be populated.
+/// Empty today. Schema 2 renamed two key prefixes - the manifest body moved
+/// from `B` to `Z` and the blob record from `L` to `B` - which is a rewrite of
+/// two whole ranges rather than a record-layout change, so a schema 1 store is
+/// refused rather than migrated: nothing had been deployed on it. The seam
+/// stays because the analytics records are the first that are likely to gain
+/// fields, and by then the store will be populated.
 #[derive(Default)]
 pub struct Migrations {
     steps: Vec<Migration>,

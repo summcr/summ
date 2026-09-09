@@ -35,7 +35,7 @@ pub fn sha256(bytes: &[u8]) -> Digest {
     Digest::Sha256(raw)
 }
 
-/// Pretend a blob upload completed: the bytes are notionally on disk, so `L`
+/// Pretend a blob upload completed: the bytes are notionally on disk, so `B`
 /// and `P` go in.
 pub fn upload(reg: &Registry, repo: &str, content: &str) -> (Digest, u64) {
     let bytes = content.as_bytes();

@@ -30,7 +30,7 @@ pub type RepoId = u32;
 /// Bump when a stored record's layout changes, and add a migration for the
 /// step. A store whose version is greater than this must be refused rather
 /// than opened: a newer summ may have written records this build cannot decode.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Platform {
@@ -89,7 +89,7 @@ pub struct ManifestRecord {
     pub pushed_at: u64,
 }
 
-/// `L <digest>` - global blob metadata. Content is deduplicated registry-wide,
+/// `B <digest>` - global blob metadata. Content is deduplicated registry-wide,
 /// so this record says nothing about who may pull it; see `P` and `R`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobRecord {

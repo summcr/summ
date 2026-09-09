@@ -1765,7 +1765,7 @@ async fn a_manifest_with_foreign_layers_pushes_without_its_blobs() {
     assert_eq!(pulled.status, StatusCode::OK);
     assert_eq!(&pulled.body[..], &body[..], "byte-exact, `urls` and all");
 
-    // The foreign layer got no `L`, `P` or `R`, so nothing claims summ has it.
+    // The foreign layer got no `B`, `P` or `R`, so nothing claims summ has it.
     // An edge here would advertise a blob that is not on disk, which turns a
     // pull into a failed read rather than an honest 404.
     let head = h.get(&format!("/v2/demo/win/blobs/{foreign}")).await;
@@ -1822,7 +1822,7 @@ async fn archived(dir: &Path, digest: &str) -> Option<Vec<u8>> {
 
 /// Risk 0's first mitigation: the corpus is self-describing.
 ///
-/// Manifest bytes live under `B <repo> <digest>` and nowhere else, so a lost
+/// Manifest bytes live under `Z <repo> <digest>` and nowhere else, so a lost
 /// metadata store leaves a disk of blobs that nothing on it can identify. The
 /// copy is what makes the manifests findable again - byte-exact, because the
 /// digest is over exactly these bytes and a recovery that cannot verify what it
@@ -1839,14 +1839,14 @@ async fn a_pushed_manifest_is_copied_into_the_blob_store_under_its_own_digest() 
         "the copy is the document as pushed, not a re-serialisation of it",
     );
 
-    // And it is a copy, not a move: `B` is still the read path, and the bytes
+    // And it is a copy, not a move: `Z` is still the read path, and the bytes
     // it returns are the ones the client sent.
     let pulled = h.get("/v2/acme/app/manifests/v1").await;
     assert_eq!(pulled.status, StatusCode::OK);
     assert_eq!(pulled.body.as_ref(), manifest().as_slice());
 }
 
-/// The copy carries no `L` or `P` record, and this is the observable
+/// The copy carries no `B` or `P` record, and this is the observable
 /// consequence of that decision.
 ///
 /// Writing them would make a manifest servable as a blob of its repository and
@@ -1941,7 +1941,7 @@ async fn deleting_a_manifest_leaves_the_copy_for_purge() {
 
 /// The ordering rule, from the failing side: no metadata without the bytes.
 ///
-/// The copy is redundant - `B` is still the read path - so a warning would be
+/// The copy is redundant - `Z` is still the read path - so a warning would be
 /// tempting here. It is refused: the state that would leave is metadata with no
 /// copy, silently, which is exactly the state the mitigation exists to prevent
 /// and which nobody discovers until they are already recovering.

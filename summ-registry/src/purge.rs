@@ -34,7 +34,7 @@
 //! repository's whole `P` range with a single `DeletePrefix` and never
 //! enumerates it.
 //!
-//! So the blob pass walks `L`, and the gap it has to cover is the mount:
+//! So the blob pass walks `B`, and the gap it has to cover is the mount:
 //! [`Registry::commit_blob`] adds a membership under a second name without
 //! writing any `R` edge, so a blob mounted a moment ago looks exactly like a
 //! blob nothing has wanted for a year. `C <digest>` closes it. Purge writes the
@@ -64,9 +64,9 @@
 //! # What is not here
 //!
 //! **The archive copies.** `summ-server` writes every manifest document into
-//! the blob store as a disaster-recovery corpus, deliberately without an `L` or
+//! the blob store as a disaster-recovery corpus, deliberately without a `B` or
 //! a `P` record - a manifest is not a blob of its repository. This pass walks
-//! `L`, so it never touches one, which is the safe half of that decision; the
+//! `B`, so it never touches one, which is the safe half of that decision; the
 //! unsafe half is that a copy whose manifest has been deleted is never
 //! reclaimed either. Finding those means walking `blobs/` and asking `M` about
 //! every file, and "does any repository hold this manifest digest" is not
@@ -76,22 +76,22 @@
 //! One consequence worth stating because it is silent: a digest that is *both*
 //! a pushed layer and a pushed manifest has one file, and this pass may reclaim
 //! it as the layer, which drops that manifest from the corpus. The read path is
-//! untouched - `B` holds the document - and pushing a manifest document as a
+//! untouched - `Z` holds the document - and pushing a manifest document as a
 //! layer is pathological, but it is a hole in the corpus rather than a hole in
 //! the registry, and it closes when the scrub gets its index.
 //!
 //! Nothing in this module deletes a file. The metadata batch commits first and
 //! the caller removes the bytes afterwards, for the same reason a push fsyncs
 //! bytes before it commits metadata: the two failure modes are not symmetric.
-//! An `L` record whose file is gone is a pull that fails. A file whose `L`
-//! record is gone is inert - nothing reaches a blob except through `L`, and a
+//! A `B` record whose file is gone is a pull that fails. A file whose `B`
+//! record is gone is inert - nothing reaches a blob except through `B`, and a
 //! re-push of the same digest makes it live again, the bytes being named by
 //! their content. Inert is not reclaimed, though: this pass finds its work by
-//! walking `L`, so a file whose record it has already retracted is one it can
+//! walking `B`, so a file whose record it has already retracted is one it can
 //! no longer see, and a crash between the two steps leaks those bytes until
 //! the orphan-file scrub above exists. A `P` membership left pointing at
 //! reclaimed content is the genuinely self-correcting case - `servable_blob`
-//! reads `L` for the size and returns `None` without it, which is a clean
+//! reads `B` for the size and returns `None` without it, which is a clean
 //! `BLOB_UNKNOWN`, and pass 2 collects the membership on a later run.
 
 use summ_core::{
@@ -378,7 +378,7 @@ fn repo_of_membership(key: &[u8]) -> Result<RepoId> {
 // --- 3. blobs ----------------------------------------------------------
 
 impl Registry {
-    /// Walk one page of `L`, maintaining the marks and reporting what is ripe.
+    /// Walk one page of `B`, maintaining the marks and reporting what is ripe.
     ///
     /// Three verdicts per blob, all from one seek over `R <digest>` and one
     /// point lookup of the mark:
@@ -463,9 +463,9 @@ impl Registry {
     /// was retracted or reset - and none of them is an error.
     ///
     /// **The bytes are the caller's to remove, and only after this returns.**
-    /// An `L` with no file is a pull that fails; a file with no `L` is inert,
+    /// A `B` with no file is a pull that fails; a file with no `B` is inert,
     /// live again on a re-push of the same digest and otherwise left for the
-    /// orphan-file scrub, because this pass finds candidates by walking `L`
+    /// orphan-file scrub, because this pass finds candidates by walking `B`
     /// and can no longer see one whose record is gone.
     pub fn collect_blob(&self, digest: &Digest, seen_before: Timestamp) -> Result<Option<u64>> {
         let Some(record) = self.blob_metadata(digest)? else {
@@ -501,7 +501,7 @@ fn digest_of_blob_key(key: &[u8]) -> Result<Digest> {
     key.get(1..)
         .and_then(Digest::decode)
         .map(|(d, _)| d)
-        .ok_or_else(|| RegistryError::corrupt("L key"))
+        .ok_or_else(|| RegistryError::corrupt("B key"))
 }
 
 // --- 4. abandoned uploads ----------------------------------------------

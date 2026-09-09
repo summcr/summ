@@ -61,13 +61,13 @@ fn a_blob_is_servable_only_where_p_or_r_says_so() {
     let (_dir, reg) = fixture();
     let shared = upload(&reg, "demo/app", "shared bytes");
     // A second repo exists but has never been given this blob, even though the
-    // content itself is deduplicated registry-wide under `L`.
+    // content itself is deduplicated registry-wide under `B`.
     let _ = upload(&reg, "other/app", "unrelated");
 
     assert!(reg.blob_is_servable("demo/app", &shared.0).unwrap());
     assert!(
         !reg.blob_is_servable("other/app", &shared.0).unwrap(),
-        "serving on `L` alone would leak content across repos"
+        "serving on `B` alone would leak content across repos"
     );
     assert!(!reg.blob_is_servable("never/heard/of", &shared.0).unwrap());
 
