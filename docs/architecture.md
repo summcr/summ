@@ -13,13 +13,13 @@ client ──HTTP──▶ summ-server ──▶ summ-registry ──▶ summ-me
                      └──────────▶ summ-storage (files)                  blobs/
 ```
 
-| Crate | Role |
-|---|---|
-| `summ-core` | Types, digests, and the binary key schema shared by every layer |
-| `summ-meta` | The `MetaEngine` trait and its RocksDB implementation |
-| `summ-storage` | The blob store: `digest -> bytes` on the filesystem, nothing else |
+| Crate           | Role                                                               |
+|-----------------|--------------------------------------------------------------------|
+| `summ-core`     | Types, digests, and the binary key schema shared by every layer    |
+| `summ-meta`     | The `MetaEngine` trait and its RocksDB implementation              |
+| `summ-storage`  | The blob store: `digest -> bytes` on the filesystem, nothing else  |
 | `summ-registry` | Turns each Distribution Spec operation into one atomic write batch |
-| `summ-server` | HTTP handlers, auth, pull counters, the discovery API, the UI |
+| `summ-server`   | HTTP handlers, auth, pull counters, the discovery API, the UI      |
 
 The HTTP layer talks to the lower crates through one trait, and an in-memory
 implementation of that trait backs the handler tests. The server also carries
@@ -43,30 +43,34 @@ Repository names are interned to a 4-byte id so a long name is not repeated in
 every key. Digests are stored raw, not hex. Values are postcard-encoded, and an
 edge key that only needs to exist carries no value at all. Every type:
 
-| Prefix | Entity | Key | Value | Answers |
-|---|---|---|---|---|
-| `M` | Manifest | repo, digest | `ManifestRecord`: media type, own size, layer total, platform, layers, children, subject, artifact type, annotations, push time | what this manifest is, without decoding its JSON |
-| `B` | Manifest body | repo, digest | the manifest JSON, zstd-compressed | the exact bytes a manifest `GET` returns |
-| `T` | Tag | repo, tag | `TagRecord`: digest, tagged time | which digest a tag points at, sorted by tag name |
-| `G` | Manifest tag edge | repo, digest, tag | — | which tags point at a manifest, and so whether it is purgeable |
-| `L` | Blob | digest | `BlobRecord`: size | blob exists registry-wide, and its size |
-| `C` | Blob mark | digest | `BlobMark`: first seen unreferenced | purge's clock; retracted by anything that references the blob |
-| `R` | Blob reference edge | digest, repo, manifest | — | which manifests reference a blob |
-| `P` | Repo blob | repo, digest | `RepoBlobRecord`: size, added time | blob is in this repo; the grace clock purge reads |
-| `S` | Child parent edge | repo, child, parent | — | which indexes list a per-platform manifest |
-| `F` | Referrer edge | repo, subject, referrer | `ReferrerRecord`: media type, artifact type, size, annotations | OCI 1.1 referrers, filtered during the scan |
-| `U` | Upload session | uuid | `UploadSession`: repo, offset, timestamps, digest algorithm, hasher state | where a chunked upload resumes, on any process |
-| `H` | Tag event, by tag | repo, tag, `!`time, digest | `TagEvent`: created or deleted, media type, size | one tag's history, newest first |
-| `J` | Tag event, by manifest | repo, digest, `!`time, tag | `TagEvent` | what a manifest was ever tagged, and when |
-| `A` | Counter bucket | scope, repo, subject (none at repo scope), day, shard | `CounterBucket`: manifest pulls, blob pulls, bytes out, each per hour | pull counters per repo, tag, and manifest |
-| `D` | Dead repo | repo id | `DeadRepo`: name, dropped time | the sweeper's worklist after a repository delete |
-| `n` | Repo name to id | name | repo id | the interner, and the name order `_catalog` pages in |
-| `i` | Repo id to name | repo id | name | an id back to the name a response prints |
-| `v` | Schema version | — | `SCHEMA_VERSION` | whether this build may open this store |
+| Prefix | Entity                 | Key                                                                    | Value                                                                                                                           | Answers                                                        |
+|--------|------------------------|------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
+| `M`    | Manifest               | repo, m_digest                                                         | `ManifestRecord`: media type, own size, layer total, platform, layers, children, subject, artifact type, annotations, push time | what this manifest is, without decoding its JSON               |
+| `B`    | Manifest body          | repo, m_digest                                                         | the manifest JSON, zstd-compressed                                                                                              | the exact bytes a manifest `GET` returns                       |
+| `T`    | Tag                    | repo, tag                                                              | `TagRecord`: digest, tagged time                                                                                                | which digest a tag points at, sorted by tag name               |
+| `G`    | Manifest tag edge      | repo, m_digest, tag                                                    | —                                                                                                                               | which tags point at a manifest, and so whether it is purgeable |
+| `L`    | Blob                   | b_digest                                                               | `BlobRecord`: size                                                                                                              | blob exists registry-wide, and its size                        |
+| `C`    | Blob mark              | b_digest                                                               | `BlobMark`: first seen unreferenced                                                                                             | purge's clock; retracted by anything that references the blob  |
+| `R`    | Blob reference edge    | b_digest, repo, m_digest                                               | —                                                                                                                               | which manifests reference a blob                               |
+| `P`    | Repo blob              | repo, b_digest                                                         | `RepoBlobRecord`: size, added time                                                                                              | blob is in this repo; the grace clock purge reads              |
+| `S`    | Child parent edge      | repo, child m_digest, parent m_digest                                  | —                                                                                                                               | which indexes list a per-platform manifest                     |
+| `F`    | Referrer edge          | repo, subject m_digest, referrer m_digest                              | `ReferrerRecord`: media type, artifact type, size, annotations                                                                  | OCI 1.1 referrers, filtered during the scan                    |
+| `U`    | Upload session         | uuid                                                                   | `UploadSession`: repo, offset, timestamps, digest algorithm, hasher state                                                       | where a chunked upload resumes, on any process                 |
+| `H`    | Tag event, by tag      | repo, tag, time_asc, m_digest                                          | `TagEvent`: created or deleted, media type, size                                                                                | one tag's history, newest first                                |
+| `J`    | Tag event, by manifest | repo, m_digest, time_asc, tag                                          | `TagEvent`                                                                                                                      | what a manifest was ever tagged, and when                      |
+| `A`    | Counter bucket         | scope, repo, subject (tag or m_digest; none at repo scope), day, shard | `CounterBucket`: manifest pulls, blob pulls, bytes out, each per hour                                                           | pull counters per repo, tag, and manifest                      |
+| `D`    | Dead repo              | repo id                                                                | `DeadRepo`: name, dropped time                                                                                                  | the sweeper's worklist after a repository delete               |
+| `n`    | Repo name to id        | name                                                                   | repo id                                                                                                                         | the interner, and the name order `_catalog` pages in           |
+| `i`    | Repo id to name        | repo id                                                                | name                                                                                                                            | an id back to the name a response prints                       |
+| `v`    | Schema version         | —                                                                      | `SCHEMA_VERSION`                                                                                                                | whether this build may open this store                         |
 
-Timestamps in `H` and `J` keys are stored complemented, written `!`time above,
-so a forward scan arrives newest first. `A` keys carry a writing-node shard so
-two nodes cannot last-write-wins over one bucket.
+`m_digest` is a manifest's digest and `b_digest` a blob's. The two encode
+identically, so nothing but the key's type prefix says which kind it holds, and
+a range that mixed them up would answer a manifest lookup with a layer.
+Timestamps in `H` and `J` keys are stored with the time bit-flipped, written
+`time_asc` above, so the keys ascend as the instant they describe recedes and a
+forward scan arrives newest first. `A` keys carry a writing-node shard so two
+nodes cannot last-write-wins over one bucket.
 
 Three rules follow from the schema:
 
