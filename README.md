@@ -132,7 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh
 That reads `uname`, downloads the matching build, checks it against the
 published SHA-256 and leaves a single `summ` in the current directory. It does
 nothing else — no PATH edits, no service files, no sudo. `--dir /usr/local/bin`
-puts it somewhere else, `--version v0.1.0-rc.1` pins a release, and
+puts it somewhere else, `--version v0.1.0` pins a release, and
 `scripts/install.sh` in this repository is the whole of it if you would rather
 read it first.
 

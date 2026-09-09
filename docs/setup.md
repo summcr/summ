@@ -134,7 +134,7 @@ Docker Hub as `summcr/summ`. They listen on `0.0.0.0:3110` and store data at
 `/var/lib/summ` as uid 10001.
 
 ```sh
-docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ:0.1.0-rc.1
+docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ:0.1.0
 ```
 
 `latest` points at the newest release, release candidates included. Pin a
