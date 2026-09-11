@@ -127,41 +127,13 @@ alongside it.
 
 ```sh
 curl -fsSL https://summcr.com/install.sh | sh
-```
-
-That reads `uname`, downloads the matching build, checks it against the
-published SHA-256 and leaves a single `summ` in the current directory. It does
-nothing else — no PATH edits, no service files, no sudo. `--dir /usr/local/bin`
-puts it somewhere else, `--version v0.1.0` pins a release, and
-`scripts/install.sh` in this repository is the whole of it if you would rather
-read it first — it is the file that URL serves. To fetch it from GitHub instead
-of the domain:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh | sh
-```
-
-Or take the tarball for your platform directly — each carries `summ`, `LICENSE`
-and `NOTICE`, with a `.sha256` beside it:
-
-| Platform | Asset |
-|---|---|
-| Linux x86_64 | [`summ-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-x86_64-unknown-linux-gnu.tar.gz) |
-| Linux arm64 | [`summ-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-aarch64-unknown-linux-gnu.tar.gz) |
-| macOS Apple silicon | [`summ-aarch64-apple-darwin.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-aarch64-apple-darwin.tar.gz) |
-| macOS Intel | [`summ-x86_64-apple-darwin.tar.gz`](https://github.com/summcr/summ/releases/latest/download/summ-x86_64-apple-darwin.tar.gz) |
-
-```sh
-curl -fsSL https://github.com/summcr/summ/releases/latest/download/<asset> | tar -xz summ
-```
-
-Then start it:
-
-```sh
 ./summ serve
 ```
 
-Data goes in `./data` next to the binary. `--data-dir` puts it elsewhere.
+The installer verifies a checksum and leaves a single `summ` in the current
+directory — no PATH edits, no service files, no sudo. Data goes in `./data`
+beside the binary; `--data-dir` puts it elsewhere. Platform assets, checksums
+and building from source are in [docs/setup.md](docs/setup.md).
 
 ### Docker
 
@@ -202,6 +174,26 @@ a *binary* on your host — the Docker daemon runs in a VM there, where
 More in [docs/setup.md](docs/setup.md), including platform requirements and
 building from source, and [docs/data-dir.md](docs/data-dir.md) for what summ
 stores and how to back it up.
+
+### Run it unattended
+
+`summ serve` runs in the foreground. For CI, a script or an AI agent, background
+it and wait on the port — and let the kernel pick one if 3110 might be taken:
+
+```sh
+./summ serve --listen 127.0.0.1:0 --data-dir "$(mktemp -d)" > summ.log 2>&1 &
+for _ in $(seq 100); do
+  addr=$(awk '/listening on/ {print $3; exit}' summ.log)
+  [ -n "$addr" ] && break
+  sleep 0.1
+done
+curl -fsS "http://$addr/v2/"
+```
+
+summ reads the address back from the listener, so the banner reports the port it
+actually got. That plus a scratch data directory is a throwaway registry with
+nothing to tear down but the process. [AGENTS.md](AGENTS.md) is the rest of the
+operating manual for an automated caller.
 
 ## Deployment
 

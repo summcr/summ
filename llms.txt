@@ -1,0 +1,35 @@
+# summ
+
+> An OCI Distribution Spec container registry in a single binary. No database,
+> no object store, no token server: `summ serve` is the whole deployment. It
+> serves the `/v2/` registry API, its own cursor-paged `/api/v1/` discovery API,
+> and a built-in web UI on one port, with pull counts, tag history and a
+> background purge included.
+
+Install and run: `curl -fsSL https://summcr.com/install.sh | sh` then
+`./summ serve`, which listens on `127.0.0.1:3110`. `GET /v2/` returning `200`
+with `{}` means it is ready. `summ serve` runs in the foreground; background it
+and poll that endpoint rather than waiting on the process, and use
+`--listen 127.0.0.1:0` for an ephemeral port, which the startup banner reports.
+
+Design constraints worth knowing before reading the API: the target is 10M
+repositories and up to 10M manifests in one of them, so no endpoint returns an
+unbounded set — every list takes a cursor and a limit, every count is bounded
+and says whether it is complete, and only a `null` cursor ends a listing.
+
+## Docs
+
+- [Agent guide](https://raw.githubusercontent.com/summcr/summ/main/AGENTS.md): running summ unattended, the endpoints, and the routes that destroy data
+- [HTTP API](https://raw.githubusercontent.com/summcr/summ/main/docs/api.md): the `/v2/` registry API and the `/api/v1/` discovery API, with response shapes and error codes
+- [Setup](https://raw.githubusercontent.com/summcr/summ/main/docs/setup.md): install, platform requirements, flags and their environment twins, container, building from source
+- [Authentication](https://raw.githubusercontent.com/summcr/summ/main/docs/auth.md): the three `--auth-mode` values, API keys, and client login
+- [Data directory](https://raw.githubusercontent.com/summcr/summ/main/docs/data-dir.md): what is on disk, backup, and the one-filesystem rule
+- [Architecture](https://raw.githubusercontent.com/summcr/summ/main/docs/architecture.md): crates, the RocksDB metadata engine, the blob store, write ordering
+- [README](https://raw.githubusercontent.com/summcr/summ/main/README.md): what summ is, the feature list, and the quick start
+
+## Optional
+
+- [Deployment](https://raw.githubusercontent.com/summcr/summ/main/DEPLOYMENT.md): a dedicated user, a sandboxed systemd unit, and TLS in front
+- [Installer](https://raw.githubusercontent.com/summcr/summ/main/scripts/install.sh): the script the one-liner runs
+- [Repository](https://github.com/summcr/summ): source, releases and issues
+- [Live demo](https://demo.registry.summcr.com/r/summcr/summ): the web UI against a real registry

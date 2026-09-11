@@ -100,7 +100,7 @@ Linux the daemon shares your network namespace and the question does not arise.
 
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
-| `--listen` | `SUMM_LISTEN` | `127.0.0.1:3110` | IP and port. Use `0.0.0.0:3110` to serve the network. |
+| `--listen` | `SUMM_LISTEN` | `127.0.0.1:3110` | IP and port. `0.0.0.0:3110` serves the network; a port of `0` lets the kernel pick one. |
 | `--data-dir` | `SUMM_DATA_DIR` | `./data` | Where everything is stored. See [Data directory](data-dir.md). |
 | `--auth-mode` | `SUMM_AUTH_MODE` | `open` | `open`, `public-pull`, or `private`. See [Authentication](auth.md). |
 | `--max-upload-bytes` | `SUMM_MAX_UPLOAD_BYTES` | 32 GiB | Largest layer accepted. `0` removes the limit. |
@@ -170,3 +170,12 @@ curl -fsS http://127.0.0.1:3110/v2/
 A `200` with an empty JSON object means the registry is serving. Under
 `private` mode this returns `401` until a key is presented, which is the
 expected answer.
+
+That endpoint is the readiness signal, and the right liveness probe for an
+orchestrator. `summ serve` runs in the foreground and never returns, so a script
+or a CI job should background it and poll this rather than wait on the process.
+With `--listen 127.0.0.1:0` the kernel picks the port and summ reads it back
+from the listener, so the banner reports the one it actually got — which is what
+lets two jobs run registries at once without agreeing on a number in advance.
+[AGENTS.md](../AGENTS.md) has the recipe and the rest of what an automated
+caller needs.

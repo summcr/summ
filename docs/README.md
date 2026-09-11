@@ -21,5 +21,6 @@ It is a fit when you want a registry that:
 | [Authentication](auth.md) | The three `--auth-mode` values, keys, and client login |
 | [HTTP API](api.md) | The `/v2/` registry API, and the `/api/v1/` discovery API |
 | [Architecture](architecture.md) | Crates, the RocksDB metadata engine, the blob store, and the write ordering |
+| [Agent guide](../AGENTS.md) | Running summ unattended, and the API from a script or an automated caller |
 
 Every flag has an environment-variable twin. `summ serve --help` lists both.
