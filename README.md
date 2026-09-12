@@ -19,74 +19,65 @@ https://demo.registry.summcr.com/r/summcr/summ
 
 ## Features
 
+**A built-in web UI.** Browse repositories with their tag and manifest counts,
+search names by substring, drill into a manifest, and see pull-count grids and
+tag timelines.
+
 **Pull counts, per day and per hour.** Every repository, tag and manifest gets a
 thirty-day contribution grid and a last-24-hours strip, so "what is anyone
-actually pulling" is a page rather than a log-parsing exercise. Serving a pull
-never touches the store — a `GET` adds to a map in memory and a background task
-folds it into the metadata store every few seconds — so the counters cost the
-pull path nothing.
+actually pulling" is a page to open rather than logs to parse.
 
-**Tag history.** Every tag mutation has been recorded since the first push, so
-you can ask what a tag has pointed at over time *and* what a manifest has ever
-been called. Both are the same endpoint, addressed by tag or by digest, newest
-first, cursor-paged. History outlives what it describes: a deleted tag still
-answers, because "gone" is exactly the question you are asking.
-
-**A built-in web UI.** Same binary, same port, assets compiled in — no build
-step, no framework, no CDN, so it works air-gapped. Browse repositories with
-per-repo tag and manifest counts, search names by substring, drill into a manifest,
-and see the pull-count grids and tag timelines beside the thing they describe.
+**Tag history.** Every tag change is recorded from the first push, so you can
+ask what a tag has pointed at over time *and* what names a manifest has had.
+One endpoint answers both, addressed by tag or by digest, newest first and
+cursor-paged.
 
 ![A repository page in summ's web UI](docs/images/web-ui.png)
 
 *A repository page: tag, manifest, blob and size counts, the thirty-day and
 last-24-hours pull grids, and the tags with the platforms each one covers.*
 
-**Space that comes back.** Deleting a manifest or a repository is a metadata
-operation, so the layers behind it stay until something establishes that no
-repository anywhere still wants them. That something ships in the binary and is
-on by default: a background purge that reclaims unreferenced layer bytes,
-uploads nobody finished, and names with nothing under them, with a grace period
-in front of it so it cannot race a push. `POST /api/v1/purge?dry-run=true` says
-what a pass would take before you let one run.
+**Simple, practical auth.** `--auth-mode open|public-pull|private` sets who may
+push and pull, using API keys, and applies to `/v2/`, the discovery API and the
+UI alike. Details in [docs/auth.md](docs/auth.md).
+
+**Space that comes back.** A background purge reclaims layers nothing references
+any more, uploads nobody finished and repositories left empty, behind a grace
+period so it never races a push. Turn on `--purge-untagged` and it removes
+untagged manifests too. `POST /api/v1/purge` runs a pass on demand, and
+`?dry-run=true` shows what it would take first.
 
 **Metadata lookups are the product.** Four of the five serial steps in a cold
-`containerd` pull are metadata lookups, and their latencies add — so summ is
-built around a purpose-designed key schema over RocksDB rather than around the
+`containerd` pull are metadata lookups, and their latencies add up, so summ is
+built around a purpose-designed key schema on RocksDB rather than around the
 byte path. Nothing is a directory walk, no stored value grows with the size of
-the registry, and prefix bloom filters make the hot existence checks ~6× faster
-than the defaults. Measured: 7.42 GiB layers pushed at ~1.0 GB/s and pulled back
-from four concurrent clients at ~1.1 GB/s aggregate.
+the registry, and prefix bloom filters make the hot existence checks about 6×
+faster than RocksDB's defaults. Measured: 7.42 GiB layers pushed at ~1.0 GB/s
+and pulled back by four concurrent clients at ~1.1 GB/s combined.
 
 **Discovery as a first-class API.** `/api/v1/` serves repositories, tags,
-manifests, tag history and pull counts as a flat, cursor-paged, read-only
-surface. Every list takes a cursor and a limit; the design target is 10M
-repositories and up to 10M manifests in a single one, so nothing here
-materialises an unbounded set. Both surfaces are documented in
+manifests, tag history and pull counts as a flat, cursor-paged API, plus
+repository delete and purge. Every list takes a cursor and a limit, and nothing
+loads an unbounded set, because the design target is 10M repositories and up to
+10M manifests in a single one. The discovery API and `/v2/` are documented in
 [docs/api.md](docs/api.md).
 
-**Auth that covers everything it serves.** `--auth-mode open|public-pull|private`
-moves the registry from a laptop default, to anonymous pull with authenticated
-push, to a key on every request — and it applies to `/v2/`, the discovery API
-and the UI at once, with no exemption list. Keys are API keys sent as an HTTP
-Basic password, so `docker login` works with no token server to run; omit one
-and summ generates it and prints it once. A key supplied in `open` mode is a
-startup error, so a stray environment variable cannot leave you believing the
-registry is locked when it is not. Details in [docs/auth.md](docs/auth.md).
-
-**Conformant.** The OCI `distribution-spec` conformance suite passes with zero
-failures at every profile, including the OCI 1.1 referrers API — 1032 checks
-passing at the suite's `dev` profile, with nothing skipped.
+**Conformant.** summ passes the OCI `distribution-spec` conformance suite with
+zero failures at every profile, including the OCI 1.1 referrers API: 1032
+checks pass at the suite's `dev` profile, with nothing skipped.
 
 ## Use cases
 
 **Run your own registry, instead of pulling against someone else's limit.**
-Docker Hub rate-limits anonymous and free-tier pulls; ECR and ACR throttle by
-tier and bill the bandwidth on the way out. Meanwhile a scaling cluster and a CI
-matrix fetch the same few base images hundreds of times a day. Copy them into
-summ once — `skopeo copy`, `crane copy`, or a job that runs on merge — and the
-pulls land on a registry you run, at your network's speed, with no quota to
-exhaust.
+Docker Hub rate-limits anonymous and free-tier pulls, and so does
+[ECR Public](https://docs.aws.amazon.com/AmazonECR/latest/public/public-service-quotas.html);
+[ECR](https://docs.aws.amazon.com/AmazonECR/latest/userguide/service-quotas.html) and
+[GAR](https://docs.cloud.google.com/artifact-registry/quotas) meter requests
+against per-region quotas and bill every byte that leaves the region.
+Meanwhile a scaling cluster and a CI matrix fetch the same few base images
+hundreds of times a day. Copy them into summ once — `skopeo copy`, `oras cp`,
+or a job that runs on merge — and the pulls land on a registry you run, at your
+network's speed, with no quota to exhaust.
 
 **A throwaway registry for integration tests and CI.** One binary and a
 directory — `summ serve --data-dir "$(mktemp -d)"` — no daemon, no compose file,
@@ -166,13 +157,9 @@ Docker treats the whole `127.0.0.0/8` range as insecure by default, so there is
 nothing to configure. Other clients make their own rules — `oras` and `crane`
 have to be told an endpoint is plain HTTP.
 
-One caveat on macOS and Windows: that push reaches the container above, but not
-a *binary* on your host — the Docker daemon runs in a VM there, where
-`127.0.0.1` is its own loopback rather than yours. Push to a host binary with
-`oras` or `crane` instead.
-
 More in [docs/setup.md](docs/setup.md), including platform requirements and
-building from source, and [docs/data-dir.md](docs/data-dir.md) for what summ
+building from source, [DEPLOYMENT.md](DEPLOYMENT.md) for running summ as a
+service behind TLS, and [docs/data-dir.md](docs/data-dir.md) for what summ
 stores and how to back it up.
 
 ### Run it unattended
@@ -194,10 +181,3 @@ summ reads the address back from the listener, so the banner reports the port it
 actually got. That plus a scratch data directory is a throwaway registry with
 nothing to tear down but the process. [AGENTS.md](AGENTS.md) is the rest of the
 operating manual for an automated caller.
-
-## Deployment
-
-`./summ serve` is already a complete registry, so there is nothing to stand up
-alongside it. For running it as a long-lived service — a dedicated user, a
-sandboxed systemd unit, and TLS terminated in front of it — see
-[DEPLOYMENT.md](DEPLOYMENT.md).
