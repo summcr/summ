@@ -31,12 +31,12 @@ curl -fsSL https://github.com/summcr/summ/releases/latest/download/summ-x86_64-u
   | tar -xz summ
 ```
 
-| Platform | Asset |
-|---|---|
-| Linux x86_64 | `summ-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux arm64 | `summ-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Apple silicon | `summ-aarch64-apple-darwin.tar.gz` |
-| macOS Intel | `summ-x86_64-apple-darwin.tar.gz` |
+| Platform            | Asset                                   |
+|---------------------|-----------------------------------------|
+| Linux x86_64        | `summ-x86_64-unknown-linux-gnu.tar.gz`  |
+| Linux arm64         | `summ-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Apple silicon | `summ-aarch64-apple-darwin.tar.gz`      |
+| macOS Intel         | `summ-x86_64-apple-darwin.tar.gz`       |
 
 Linux builds need glibc 2.34 or newer (Ubuntu 22.04, Debian 12, RHEL 9).
 RocksDB and its C++ runtime are linked in statically, so the only shared
@@ -98,16 +98,16 @@ Linux the daemon shares your network namespace and the question does not arise.
 
 ## The flags you will set
 
-| Flag | Env | Default | Meaning |
-|---|---|---|---|
-| `--listen` | `SUMM_LISTEN` | `127.0.0.1:3110` | IP and port. `0.0.0.0:3110` serves the network; a port of `0` lets the kernel pick one. |
-| `--data-dir` | `SUMM_DATA_DIR` | `./data` | Where everything is stored. See [Data directory](data-dir.md). |
-| `--auth-mode` | `SUMM_AUTH_MODE` | `open` | `open`, `public-pull`, or `private`. See [Authentication](auth.md). |
-| `--max-upload-bytes` | `SUMM_MAX_UPLOAD_BYTES` | 32 GiB | Largest layer accepted. `0` removes the limit. |
-| `--no-pull-counts` | `SUMM_NO_PULL_COUNTS` | off | Stop recording pull statistics. |
-| `--purge-grace` | `SUMM_PURGE_GRACE` | `24h` | How long content sits unreferenced before purge reclaims it. |
-| `--purge-untagged` | `SUMM_PURGE_UNTAGGED` | off | Also reclaim manifests no tag points at. |
-| `--no-purge` | `SUMM_NO_PURGE` | off | Stop the scheduled purge. `POST /api/v1/purge` still runs one. |
+| Flag                 | Env                     | Default          | Meaning                                                                                 |
+|----------------------|-------------------------|------------------|-----------------------------------------------------------------------------------------|
+| `--listen`           | `SUMM_LISTEN`           | `127.0.0.1:3110` | IP and port. `0.0.0.0:3110` serves the network; a port of `0` lets the kernel pick one. |
+| `--data-dir`         | `SUMM_DATA_DIR`         | `./data`         | Where everything is stored. See [Data directory](data-dir.md).                          |
+| `--auth-mode`        | `SUMM_AUTH_MODE`        | `open`           | `open`, `public-pull`, or `private`. See [Authentication](auth.md).                     |
+| `--max-upload-bytes` | `SUMM_MAX_UPLOAD_BYTES` | 32 GiB           | Largest layer accepted. `0` removes the limit.                                          |
+| `--no-pull-counts`   | `SUMM_NO_PULL_COUNTS`   | off              | Stop recording pull statistics.                                                         |
+| `--purge-grace`      | `SUMM_PURGE_GRACE`      | `24h`            | How long content sits unreferenced before purge reclaims it.                            |
+| `--purge-untagged`   | `SUMM_PURGE_UNTAGGED`   | off              | Also reclaim manifests no tag points at.                                                |
+| `--no-purge`         | `SUMM_NO_PURGE`         | off              | Stop the scheduled purge. `POST /api/v1/purge` still runs one.                          |
 
 Logging is controlled by `SUMM_LOG`, using `tracing` filter syntax. The default
 is `summ=info,summ_server=info,tower_http=info`.
@@ -155,7 +155,12 @@ container.
 
 Pass `serve` flags after the image name, or set the `SUMM_*` variables with
 `-e`. The image has a healthcheck on `GET /v2/`, which is also the right
-liveness probe for any orchestrator.
+liveness probe for any orchestrator. It counts both `200` and `401` as
+healthy, because under `private` mode a probe without a key gets `401` from a
+registry that is serving perfectly well. An orchestrator probe needs the same
+allowance: a Kubernetes `httpGet` probe only accepts 200–399, so under
+`private` use a `tcpSocket` probe instead, or an `exec` probe that runs the
+image's own check.
 
 To build an image from an unreleased commit instead, the repository
 `Dockerfile` compiles from source; `Dockerfile.release` is what packages a

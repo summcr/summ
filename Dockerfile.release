@@ -104,9 +104,12 @@ EXPOSE 3110
 USER summ:summ
 
 # `GET /v2/` is the spec's own liveness question: 200 with an empty object,
-# touching neither the blob store nor a scan.
+# touching neither the blob store nor a scan. A 401 is healthy too - it is what
+# a live registry answers a keyless probe under `--auth-mode private`, where
+# `/v2/` has no exemption. Same check as `Dockerfile`; keep the two in step.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:3110/v2/ || exit 1
+    CMD code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3110/v2/); \
+        [ "$code" = 200 ] || [ "$code" = 401 ]
 
 ARG SUMM_VERSION
 LABEL org.opencontainers.image.title="summ" \

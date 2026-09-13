@@ -93,8 +93,14 @@ USER summ:summ
 # `GET /v2/` is the spec's own liveness probe: it answers 200 with an empty
 # object and touches neither the blob store nor a scan. 3110 is a constant
 # here for the same reason it is above: the container's port does not move.
+#
+# A 401 is healthy too. Under `--auth-mode private` the probe has no key and
+# `/v2/` has no exemption, so 401 is the answer a live registry gives - and
+# `curl -f` would call it a failure, marking every private container unhealthy.
+# Anything else, including curl's 000 when nothing is listening, fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:3110/v2/ || exit 1
+    CMD code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3110/v2/); \
+        [ "$code" = 200 ] || [ "$code" = 401 ]
 
 # Split so that `docker run <image> serve --auth-mode private` replaces the
 # arguments and keeps the binary. The server already stops on SIGTERM and
