@@ -65,7 +65,7 @@ cargo build --release --locked --bin summ
 That is a complete registry. The banner tells you where it is:
 
 ```
-summ 0.1.0
+summ 0.1.1
   listening on  127.0.0.1:3110
   registry      http://127.0.0.1:3110/v2/
   data dir      /home/you/data
@@ -141,7 +141,7 @@ Docker Hub as `summcr/summ`. They listen on `0.0.0.0:3110` and store data at
 `/var/lib/summ` as uid 10001.
 
 ```sh
-docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ:0.1.0
+docker run -d --name summ -p 3110:3110 -v summ-data:/var/lib/summ summcr/summ:0.1.1
 ```
 
 `latest` points at the newest release, release candidates included. Pin a

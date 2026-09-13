@@ -3,7 +3,7 @@
 # install.sh — download the summ binary for this machine.
 #
 #   curl -fsSL https://summcr.com/install.sh | sh
-#   ./scripts/install.sh --dir /usr/local/bin --version v0.1.0
+#   ./scripts/install.sh --dir /usr/local/bin --version v0.1.1
 #
 # It resolves uname to one of the four published targets, downloads that
 # tarball and its .sha256 companion, verifies the checksum, and extracts a
