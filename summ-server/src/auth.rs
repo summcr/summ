@@ -180,11 +180,15 @@ impl ApiKey {
         if expected.is_empty() || got.is_empty() {
             return false;
         }
-        let mut diff = (expected.len() ^ got.len()) as u8;
+        // The length difference stays a full `usize`. Narrowed to `u8` it
+        // vanishes whenever the lengths differ by a multiple of 256, and the
+        // modulo indexing below then lets the key repeated that many times
+        // match byte for byte - a 64-byte key presented five times over.
+        let mut diff = expected.len() ^ got.len();
         for i in 0..expected.len().max(got.len()) {
             // Index modulo, rather than zip, so the loop count does not depend
             // on the shorter input.
-            diff |= expected[i % expected.len()] ^ got[i % got.len()];
+            diff |= usize::from(expected[i % expected.len()] ^ got[i % got.len()]);
         }
         diff == 0
     }
@@ -728,6 +732,19 @@ mod tests {
             "a repeat must not fold to equal"
         );
         assert!(!ApiKey::new("").matches(""));
+    }
+
+    #[test]
+    fn a_repeated_key_does_not_match_at_any_length() {
+        // A single repeat is not enough to catch this: the lengths have to
+        // differ by a multiple of 256 before a narrowed difference folds to
+        // zero, which for a generated key is five copies, and nine.
+        let key = ApiKey::generate();
+        for k in 2..=9 {
+            assert!(!key.matches(&key.expose().repeat(k)), "key x{k} matched");
+        }
+        let short = ApiKey::new("ab");
+        assert!(!short.matches(&"ab".repeat(129)), "258 bytes matched");
     }
 
     #[test]
