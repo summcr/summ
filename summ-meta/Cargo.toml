@@ -11,7 +11,7 @@ postcard.workspace = true
 redb = { workspace = true, optional = true }
 rocksdb.workspace = true
 parking_lot = "0.12"
-lru = "0.12"
+lru = "0.18.4"
 
 [dev-dependencies]
 tempfile = "3"
