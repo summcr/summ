@@ -56,8 +56,8 @@ edge key that only needs to exist carries no value at all. Every type:
 | `S`    | Child parent edge      | repo, child m_digest, parent m_digest                                  | —                                                                                                                               | which indexes list a per-platform manifest                     |
 | `F`    | Referrer edge          | repo, subject m_digest, referrer m_digest                              | `ReferrerRecord`: media type, artifact type, size, annotations                                                                  | OCI 1.1 referrers, filtered during the scan                    |
 | `U`    | Upload session         | uuid                                                                   | `UploadSession`: repo, offset, timestamps, digest algorithm, hasher state                                                       | where a chunked upload resumes, on any process                 |
-| `H`    | Tag event, by tag      | repo, tag, time_asc, m_digest                                          | `TagEvent`: created or deleted, media type, size                                                                                | one tag's history, newest first                                |
-| `J`    | Tag event, by manifest | repo, m_digest, time_asc, tag                                          | `TagEvent`                                                                                                                      | what a manifest was ever tagged, and when                      |
+| `H`    | Tag event, by tag      | repo, tag, time_desc, m_digest                                         | `TagEvent`: created or deleted, media type, size                                                                                | one tag's history, newest first                                |
+| `J`    | Tag event, by manifest | repo, m_digest, time_desc, tag                                         | `TagEvent`                                                                                                                      | what a manifest was ever tagged, and when                      |
 | `A`    | Counter bucket         | scope, repo, subject (tag or m_digest; none at repo scope), day, shard | `CounterBucket`: manifest pulls, blob pulls, bytes out, each per hour                                                           | pull counters per repo, tag, and manifest                      |
 | `D`    | Dead repo              | repo id                                                                | `DeadRepo`: name, dropped time                                                                                                  | the sweeper's worklist after a repository delete               |
 | `n`    | Repo name to id        | name                                                                   | repo id                                                                                                                         | the interner, and the name order `_catalog` pages in           |
@@ -69,9 +69,9 @@ identically, so nothing but the key's type prefix says which kind it holds, and
 a range that mixed them up would answer a manifest lookup with a layer. The
 letters are mnemonic where they can be: `B` is the blob record, and the
 manifest body is `Z` because it is the one range stored compressed.
-Timestamps in `H` and `J` keys are stored with the time bit-flipped, written
-`time_asc` above, so the keys ascend as the instant they describe recedes and a
-forward scan arrives newest first. `A` keys carry a writing-node shard so two
+Timestamps in `H` and `J` keys are stored bit-flipped (`!ms`), written
+`time_desc` above: flipping the bits turns ascending byte order into descending
+time order, so a forward scan arrives newest first. `A` keys carry a writing-node shard so two
 nodes cannot last-write-wins over one bucket.
 
 Three rules follow from the schema:
