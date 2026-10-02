@@ -41,19 +41,11 @@ last-24-hours pull grids, and the tags with the platforms each one covers.*
 push and pull, using API keys, and applies to `/v2/`, the discovery API and the
 UI alike. Details in [docs/auth.md](docs/auth.md).
 
-**Space that comes back.** A background purge reclaims layers nothing references
-any more, uploads nobody finished and repositories left empty, behind a grace
+**Auto cleanup of orphaned layers.** A background purge reclaims layers nothing
+references any more and repositories left empty, behind a grace
 period so it never races a push. Turn on `--purge-untagged` and it removes
 untagged manifests too. `POST /api/v1/purge` runs a pass on demand, and
 `?dry-run=true` shows what it would take first.
-
-**Metadata lookups are the product.** Four of the five serial steps in a cold
-`containerd` pull are metadata lookups, and their latencies add up, so summ is
-built around a purpose-designed key schema on RocksDB rather than around the
-byte path. Nothing is a directory walk, no stored value grows with the size of
-the registry, and prefix bloom filters make the hot existence checks about 6×
-faster than RocksDB's defaults. Measured: 7.42 GiB layers pushed at ~1.0 GB/s
-and pulled back by four concurrent clients at ~1.1 GB/s combined.
 
 **Discovery as a first-class API.** `/api/v1/` serves repositories, tags,
 manifests, tag history and pull counts as a flat, cursor-paged API, plus
@@ -85,11 +77,6 @@ no service container to wait on. Bind it to loopback and Docker pushes to it
 without an `insecure-registries` entry; delete the directory when the run ends.
 Tests assert on what was pushed through the discovery API rather than by
 grepping output.
-
-**A personal registry that is not a weekend of YAML.** A homelab, a NAS, a
-laptop, a few side projects that need somewhere to put images. `./summ serve` is
-the whole deployment — no database, no object store, and the web UI is already
-on the same port. Add `--auth-mode public-pull` when it leaves the laptop.
 
 **A home for OCI artifacts that are not images.** Helm charts, WASM modules,
 SBOMs, signatures, attestations, model weights — push them with `oras push` or
@@ -162,22 +149,6 @@ building from source, [DEPLOYMENT.md](DEPLOYMENT.md) for running summ as a
 service behind TLS, and [docs/data-dir.md](docs/data-dir.md) for what summ
 stores and how to back it up.
 
-### Run it unattended
 
-`summ serve` runs in the foreground. For CI, a script or an AI agent, background
-it and wait on the port — and let the kernel pick one if 3110 might be taken:
-
-```sh
-./summ serve --listen 127.0.0.1:0 --data-dir "$(mktemp -d)" > summ.log 2>&1 &
-for _ in $(seq 100); do
-  addr=$(awk '/listening on/ {print $3; exit}' summ.log)
-  [ -n "$addr" ] && break
-  sleep 0.1
-done
-curl -fsS "http://$addr/v2/"
-```
-
-summ reads the address back from the listener, so the banner reports the port it
-actually got. That plus a scratch data directory is a throwaway registry with
-nothing to tear down but the process. [AGENTS.md](AGENTS.md) is the rest of the
-operating manual for an automated caller.
+### Agents
+[AGENTS.md](AGENTS.md) contains operating manual for AI agents.
