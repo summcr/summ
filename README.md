@@ -95,6 +95,34 @@ still pulls, when a tag last moved and what it pointed at before, whether a
 manifest has ever been called anything else — questions most registries cannot
 answer at all. summ answers them on the page you were already looking at.
 
+## How summ compares
+
+summ is built to be easy to install and operate: one binary, nothing else to
+run. It is not trying to be a comprehensive registry like Harbor. The table
+compares it with distribution, the reference implementation, and Harbor.
+
+|                            | summ                              | [distribution](https://github.com/distribution/distribution) | [Harbor](https://goharbor.io)                |
+|----------------------------|-----------------------------------|--------------------------------------------------------------|----------------------------------------------|
+| **Setup**                  |                                   |                                                              |                                              |
+| Install                    | One binary or one container       | One binary or one container                                  | Installer script or Helm chart               |
+| Processes to run           | 1                                 | 1                                                            | 9 containers, plus optional Trivy            |
+| Required dependencies      | None                              | None (filesystem storage)                                    | PostgreSQL and Redis                         |
+| Configuration to start     | None; defaults work               | YAML config file (the image ships a default)                 | `harbor.yml`, then generated compose         |
+| Air-gapped friendly        | Yes; UI compiled in, no CDN       | Yes                                                          | Offline installer bundles the images         |
+| **Features**               |                                   |                                                              |                                              |
+| Web UI                     | ✅ built in                        | ❌                                                            | ✅                                            |
+| Pull counts                | ✅ per day and hour                | ❌                                                            | Total per repository, last pull per artifact |
+| Tag history                | ✅ by tag or digest                | ❌                                                            | Audit log only                               |
+| Cursor-paged discovery API | ✅ `/api/v1/`                      | `_catalog` only                                              | ✅ REST API (page/size)                       |
+| OCI 1.1 referrers API      | ✅ with `artifactType` filtering   | ✅                                                            | ✅                                            |
+| Orphan cleanup             | ✅ background, with grace period   | Offline `garbage-collect`; registry read-only or stopped     | ✅ scheduled GC                               |
+| Object-store backends      | 🚧 Planned; local filesystem today | ✅ S3, GCS, Azure                                             | ✅                                            |
+| Auth                       | API keys, three modes             | htpasswd, or a separate token server                         | Users, RBAC, LDAP, OIDC                      |
+| **Beyond summ's scope**    |                                   |                                                              |                                              |
+| Vulnerability scanning     | ❌                                 | ❌                                                            | ✅ Trivy                                      |
+| Replication                | ❌                                 | ❌                                                            | ✅                                            |
+| Multi-tenant projects/RBAC | ❌                                 | ❌                                                            | ✅                                            |
+
 ## Quick start
 
 Run the binary, or run the container. Either way you get a complete registry on
