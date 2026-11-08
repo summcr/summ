@@ -22,7 +22,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 postcard = { version = "1", features = ["alloc"] }
-redb = "2"
+redb = "4"
 rocksdb = "0.25"
 sha2 = "0.11"
 tokio = { version = "1", features = ["full"] }

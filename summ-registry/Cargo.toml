@@ -10,7 +10,7 @@ summ-meta.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true
-zstd = "0.13"
+zstd = "0.14"
 sha2.workspace = true
 # Manifest and descriptor types, rather than hand-rolling them. Only the
 # `image` feature: `runtime` and `distribution` pull in types this crate has no

@@ -9,7 +9,7 @@
 use std::ops::Bound;
 use std::sync::Arc;
 
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableDatabase, TableDefinition};
 use summ_core::{Result, SummError};
 
 use crate::engine::{KeyPage, MetaEngine, MetaOp, Page, WriteBatch};
