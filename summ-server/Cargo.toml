@@ -33,6 +33,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v4"] }
+# One ioctl: the terminal's width, which decides whether the startup banner
+# has room for the mark beside it. Already in the build through tokio and
+# RocksDB, so naming it here compiles nothing new.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -9,11 +9,14 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use clap::Parser;
+use splash::Banner;
 use summ_server::auth::{AuthPolicy, Generated};
 use summ_server::backend::{Backend, Engine};
 use summ_server::config::{Cli, Command, ServeArgs};
 use summ_server::{router, AppState};
 use tracing_subscriber::EnvFilter;
+
+mod splash;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -96,34 +99,43 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Printed, not logged. This is the answer to "did it start, and where?",
     // so it must survive `SUMM_LOG=warn` and any later change to the filter.
-    println!("summ {}", env!("CARGO_PKG_VERSION"));
-    println!("  listening on  {}:{}", bound.ip(), bound.port());
-    println!("  registry      http://{}/v2/", reachable(bound));
-    println!("  data dir      {}", data_dir.display());
+    // Built as rows and laid out by `splash`: plain text off a terminal, the
+    // mark beside it on one.
+    let mut banner = Banner::new(env!("CARGO_PKG_VERSION"));
+    banner.field("listening on", format!("{}:{}", bound.ip(), bound.port()));
+    banner.field("registry", format!("http://{}/v2/", reachable(bound)));
+    banner.field("data dir", data_dir.display().to_string());
     if args.allow_missing_references {
-        println!("  references    unvalidated (--allow-missing-references)");
+        banner.field("references", "unvalidated (--allow-missing-references)");
     }
     if args.no_pull_counts {
-        println!("  pull counts   off (--no-pull-counts)");
+        banner.field("pull counts", "off (--no-pull-counts)");
     }
     // Said either way, because both answers matter to whoever is watching the
     // disk: one of them means the registry is reclaiming space on its own.
     if purging {
         let purge = args.purge_config();
-        println!(
-            "  purge         every {} after {} unreferenced{}",
-            span(purge.interval),
-            span(purge.grace),
-            if purge.untagged {
-                ", untagged manifests included"
-            } else {
-                ""
-            }
+        banner.field(
+            "purge",
+            format!(
+                "every {} after {} unreferenced{}",
+                span(purge.interval),
+                span(purge.grace),
+                if purge.untagged {
+                    ", untagged manifests included"
+                } else {
+                    ""
+                }
+            ),
         );
     } else {
-        println!("  purge         off (--no-purge); POST /api/v1/purge still runs a pass");
+        banner.field(
+            "purge",
+            "off (--no-purge); POST /api/v1/purge still runs a pass",
+        );
     }
-    print_auth(&auth, generated, bound);
+    describe_auth(&mut banner, &auth, generated, bound);
+    banner.print();
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
@@ -162,49 +174,60 @@ fn span(d: std::time::Duration) -> String {
 /// all: whoever passed it already has it, and echoing it only copies a live
 /// credential into a scrollback, a log file and a CI transcript. So the banner
 /// says which keys it made up, and stays silent about the rest.
-fn print_auth(auth: &AuthPolicy, generated: Option<Generated>, bound: SocketAddr) {
+fn describe_auth(
+    banner: &mut Banner,
+    auth: &AuthPolicy,
+    generated: Option<Generated>,
+    bound: SocketAddr,
+) {
     let generated = generated.unwrap_or(Generated {
         read: false,
         write: false,
     });
     match auth {
         AuthPolicy::Open => {
-            println!("  auth mode     open - no credential is required, to pull or to push");
+            banner.field(
+                "auth mode",
+                "open - no credential is required, to pull or to push",
+            );
             match reach(bound) {
                 Reach::Loopback => {
-                    println!("                any process on this machine may pull, push and");
-                    println!("                delete; the listener is on loopback, so nothing");
-                    println!("                else can reach it");
+                    banner.more("any process on this machine may pull, push and");
+                    banner.more("delete; the listener is on loopback, so nothing");
+                    banner.more("else can reach it");
                 }
                 Reach::Network(who) => {
                     for line in open_warning(&who) {
-                        println!("{line}");
+                        banner.wide(line);
                     }
                 }
             }
         }
         AuthPolicy::PublicPull { write } => {
-            println!("  auth mode     public-pull - anonymous pull, API key to push");
-            println!("                the catalog, every tag, every manifest and the whole");
-            println!("                UI are readable by anyone who can reach the port");
+            banner.field("auth mode", "public-pull - anonymous pull, API key to push");
+            banner.more("the catalog, every tag, every manifest and the whole");
+            banner.more("UI are readable by anyone who can reach the port");
             if generated.write {
-                println!("  write key     {}   (generated)", write.expose());
+                banner.field("write key", format!("{}   (generated)", write.expose()));
             }
         }
         AuthPolicy::Private { read, write } => {
-            println!("  auth mode     private - a key for everything, as an HTTP Basic password");
-            println!("                /v2/, the discovery API and the UI are all behind it;");
-            println!("                the read key reads, the write key does both");
+            banner.field(
+                "auth mode",
+                "private - a key for everything, as an HTTP Basic password",
+            );
+            banner.more("/v2/, the discovery API and the UI are all behind it;");
+            banner.more("the read key reads, the write key does both");
             if generated.read {
-                println!("  read key      {}   (generated)", read.expose());
+                banner.field("read key", format!("{}   (generated)", read.expose()));
             }
             if generated.write {
-                println!("  write key     {}   (generated)", write.expose());
+                banner.field("write key", format!("{}   (generated)", write.expose()));
             }
         }
     }
     if generated.read || generated.write {
-        println!("  !! a generated key is printed once and is not stored anywhere.");
+        banner.note("!! a generated key is printed once and is not stored anywhere.");
     }
 }
 
